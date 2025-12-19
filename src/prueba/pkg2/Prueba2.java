@@ -9,12 +9,12 @@ package prueba.pkg2;
  * @author anabe
  */
 public class Prueba2 {
-
+    
     /**
      * @param args the command line arguments
      */
     public static void main(String[] args) {
+        System.out.print("fea");
         // TODO code application logic here
     }
-    
 }
