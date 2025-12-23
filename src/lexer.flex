@@ -6,7 +6,7 @@
      */
     %%
 
-    %class Lexer
+    %class LexerCompi
     %unicode
     %cup
     %line
@@ -28,17 +28,18 @@
     WhiteSpace     = {LineTerminator} | [ \t\f]
 
     /* comments */
-    Comment = {TraditionalComment} | {EndOfLineComment} | {DocumentationComment}
+    SingleLineComment = \|{InputCharacter}*{LineTerminator}?
+    MultLineComment = "є" ([^э])* "э"
+    Comment = {SingleLineComment} | {MultLineComment}
 
-    TraditionalComment   = "/*" [^*] ~"*/" | "/*" "*"+ "/"
-    // Comment can be the last line of the file, without line terminator.
-    EndOfLineComment     = "//" {InputCharacter}* {LineTerminator}?
-    DocumentationComment = "/**" {CommentContent} "*"+ "/"
-    CommentContent       = ( [^*] | \*+ [^/*] )*
+    Identifier = [:jletter:] ([:jletterdigit:]|_)*
 
-    Identifier = [:jletter:] [:jletterdigit:]*
+    Digit = [0-9]
+    DigitNoZero = [1-9]
 
-    DecIntegerLiteral = 0 | [1-9][0-9]*
+    /* orden de reglas */
+    DecFloatLiteral = [-]? (0 | [1-9][0-9]*) \. [0-9]+
+    DecIntegerLiteral = [-]? (0 | [1-9][0-9]*)
 
     %state STRING
 
