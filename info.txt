@@ -1,0 +1,6 @@
+a. Nombre del curso: compiladores e interpretes
+b. Número de semestre y año lectivo: verano del 2025-2026
+c. Nombre de los Estudiantes: Ana Belén Murillo Solís (2023044899) - Josué Quintana (2020116511) 
+e. Número de proyecto programado: proyecto número 1
+f. Fecha de entrega: 26 de diciembre, 2025
+g. Estatus de la entrega :  [Deplorable|Regular|Buena|MuyBuena|Excelente|Superior]
