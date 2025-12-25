@@ -1,0 +1,5 @@
+abstract x = 10;
+break;
+function suma(a, b) {
+    return a + b;
+}

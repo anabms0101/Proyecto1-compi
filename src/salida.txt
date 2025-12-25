@@ -1,0 +1,17 @@
+Tipo: ABSTRACT        Lexema: abstract        Linea=1 Columna=1
+Tipo: IDENTIFIER      Lexema: x               Linea=1 Columna=10
+Tipo: IQ              Lexema: =               Linea=1 Columna=12
+Tipo: INTEGER_LITERAL Lexema: 10              Linea=1 Columna=14
+Tipo: SEMICOLON       Lexema: ;               Linea=1 Columna=16
+Tipo: BREAK           Lexema: break           Linea=2 Columna=1
+Tipo: SEMICOLON       Lexema: ;               Linea=2 Columna=6
+Tipo: FUNCTION        Lexema: function        Linea=3 Columna=1
+Tipo: IDENTIFIER      Lexema: suma            Linea=3 Columna=10
+Tipo: IDENTIFIER      Lexema: a               Linea=3 Columna=15
+Tipo: COMA            Lexema: ,               Linea=3 Columna=16
+Tipo: IDENTIFIER      Lexema: b               Linea=3 Columna=18
+Tipo: RETURN          Lexema: return          Linea=4 Columna=5
+Tipo: IDENTIFIER      Lexema: a               Linea=4 Columna=12
+Tipo: PLUS            Lexema: +               Linea=4 Columna=14
+Tipo: IDENTIFIER      Lexema: b               Linea=4 Columna=16
+Tipo: SEMICOLON       Lexema: ;               Linea=4 Columna=17
