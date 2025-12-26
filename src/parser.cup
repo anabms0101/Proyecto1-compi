@@ -26,3 +26,4 @@ precedence left UMINUS;
 
 /* The grammar rules */
 expr_list ::= 
+}:
