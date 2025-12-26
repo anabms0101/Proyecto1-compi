@@ -1,0 +1,49 @@
+import java_cup.runtime.*;
+
+/* Terminals (tokens returned by the scanner). */
+terminal SEMI, UMINUS;
+terminal ABSTRACT;
+
+/* Palabras reservadas */
+terminal FUNCTION, RETURN, GIFT, COAL, NAVIDAD;
+terminal IF, ELSE, WHILE, FOR;
+terminal WORLD;
+terminal LOCAL;
+terminal SHOW, GET;
+terminal DECIDE, OF, END, BREAK;
+terminal LOOP, EXIT, WHEN;
+
+/* bloques */
+terminal BLOQUE_ABI, BLOQUE_CER;
+
+/* simbolos */
+terminal PARENI, PAREND, COMA, SEMICOLON, ENDL;
+terminal BRACKETI, BRACKETD;
+
+/* operadores */
+terminal PLUS, MINUS, TIMES, DIV, POW, MOD, DIVINT;
+terminal IQ, IQIQ, MAQ, MEQ, MAIQ, MEIQ, DIFQ;
+terminal INC, DEC;
+
+/* operadores control */
+terminal ARROW;
+
+/* operadores logicos */
+terminal AND, OR, NOT;
+
+/* tipos */
+terminal INT, FLOAT, BOOLEAN, CHAR, STRING;
+
+/* identificadores y literales */
+terminal IDENTIFIER;
+terminal INTEGER_LITERAL;
+terminal FLOAT_LITERAL;
+terminal BOOL_LITERAL;
+terminal CHAR_LITERAL;
+terminal STRING_LITERAL;
+
+non terminal program;
+
+start with program;
+
+program ::= ;
