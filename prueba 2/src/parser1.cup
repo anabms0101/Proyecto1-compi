@@ -1,0 +1,122 @@
+import java_cup.runtime.*;
+
+/* Terminals (tokens returned by the scanner). */
+terminal SEMI, UMINUS;
+terminal ABSTRACT;
+
+/* Palabras reservadas */
+terminal FUNCTION, RETURN, GIFT, COAL, NAVIDAD;
+terminal IF, ELSE, WHILE, FOR;
+terminal WORLD;
+terminal LOCAL;
+terminal SHOW, GET;
+terminal DECIDE, OF, END, BREAK;
+terminal LOOP, EXIT, WHEN;
+
+/* bloques */
+terminal BLOQUE_ABI, BLOQUE_CER;
+
+/* simbolos */
+terminal PARENI, PAREND, COMA, SEMICOLON, ENDL;
+terminal BRACKETI, BRACKETD;
+
+/* operadores */
+terminal PLUS, MINUS, TIMES, DIV, POW, MOD, DIVINT;
+terminal IQ, IQIQ, MAQ, MEQ, MAIQ, MEIQ, DIFQ;
+terminal INC, DEC;
+
+/* operadores control */
+terminal ARROW;
+
+/* operadores logicos */
+terminal AND, OR, NOT;
+
+/* tipos */
+terminal INT, FLOAT, BOOLEAN, CHAR, STRING;
+
+/* identificadores y literales */
+terminal IDENTIFIER;
+terminal INTEGER_LITERAL;
+terminal FLOAT_LITERAL;
+terminal BOOL_LITERAL;
+terminal CHAR_LITERAL;
+terminal STRING_LITERAL;
+
+/* NO TERMINALES */
+non terminal program, bloque, tipo;
+non terminal lista_declaracion, declaracion;
+non terminal declaracion_global;
+non terminal declaracion_funcion;
+non terminal declaracion_main;
+
+non terminal stmt_lista, stmt;
+non terminal expresion, expresion_logica, expresion_rel, expresion_arit;
+non terminal termino, factor;
+ 
+/* PRODUCCION INICIAL */
+start with program;
+
+/* PRECEDENCIA */
+precedence left OR;
+precedence left AND;
+precedence right NOT;
+precedence left IQIQ, DIFQ;
+precedence left MAQ, MEQ, MAIQ, MEIQ;
+precedence left PLUS, MINUS;
+precedence left TIMES, DIV, DIVINT, MOD;
+precedence right POW, INC, DEC;
+precedence right UMINUS;
+
+/* Produccion inicial */
+program ::= lista_declaracion ;
+
+lista_declaracion ::= lista_declaracion declaracion | declaracion;
+
+declaracion ::= declaracion_global | declaracion_funcion | declaracion_main;
+
+declaracion_global ::= WORLD tipo IDENTIFIER ENDL | WORLD tipo IDENTIFIER IQ expresion ENDL;
+
+
+declaracion_main ::= GIFT COAL NAVIDAD PARENI PAREND bloque;
+
+
+declaracion_funcion ::= GIFT tipo IDENTIFIER PARENI PAREND bloque;
+
+
+bloque ::= BLOQUE_ABI stmt_lista BLOQUE_CER;
+
+stmt_lista ::= stmt_lista stmt | stmt;
+
+stmt ::= declaracion_local | asignacion_stmt | expresion_stmt | control_stmt | RETURN expresion ENDL | BREAK ENDL;
+
+declaracion_local ::= LOCAL tipo IDENTIFIER ENDL | LOCAL tipo IDENTIFIER IQ expresion ENDL;
+
+asignacion_stmt ::= IDENTIFIER IQ expresion ENDL;
+
+expresion_stmt ::= expresion ENDL;
+
+control_stmt ::= decide_stmt | loop_stmt | for_stmt;
+
+decide_stmt ::= DECIDE OF decide_cases END DECIDE ENDL;
+
+decide_cases ::= decide_cases decide_case | decide_case;
+
+decide_case ::= expresion ARROW bloque | ELSE ARROW bloque;
+
+loop_stmt ::= LOOP stmt_lista EXIT WHEN expresion ENDL END LOOP ENDL;
+
+for_stmt ::= FOR PARENI asignacion_stmt expresion ENDL asignacion_stmt PAREND bloque;
+
+tipo ::= INT | FLOAT | BOOLEAN | CHAR | STRING;
+
+expresion ::= expresion_logica;
+
+expresion_logica ::= expresion_logica AND expresion_logica | expresion_logica OR expresion_logica | NOT expresion_logica | expresion_rel;
+
+expresion_rel ::= expresion_arit IQIQ expresion_arit | expresion_arit DIFQ expresion_arit | expresion_arit MAQ expresion_arit | expresion_arit MEQ expresion_arit | expresion_arit MAIQ expresion_arit | expresion_arit MEIQ expresion_arit | expresion_arit;
+
+expresion_arit ::= expresion_arit PLUS termino | expresion_arit MINUS termino | termino;
+
+termino ::= termino TIMES factor | termino DIV factor | termino DIVINT factor | termino MOD factor | factor;
+
+factor ::= INTEGER_LITERAL | FLOAT_LITERAL | BOOL_LITERAL | CHAR_LITERAL | STRING_LITERAL | IDENTIFIER | MINUS factor %prec UMINUS | INC IDENTIFIER | DEC IDENTIFIER | PARENI expresion PAREND;

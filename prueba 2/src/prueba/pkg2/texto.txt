@@ -1,0 +1,4 @@
+decide of
+x > 0 -> ¡ show "positivo" endl !
+else -> ¡ show "negativo" endl !
+end decide endl
