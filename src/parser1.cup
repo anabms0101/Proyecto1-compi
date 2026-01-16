@@ -1,4 +1,69 @@
 import java_cup.runtime.*;
+import java.util.ArrayList;
+import java.util.List;
+
+
+
+parser code {:
+    // Lista para guardar TODAS las tablas y poder imprimirlas al final
+    public ArrayList<TablaSimbolos> reporteTablas = new ArrayList<>();
+    public ArrayList<Errores> listaErrores = new ArrayList<>();
+    
+    // Tabla actual (inicialmente la global)
+    public TablaSimbolos tablaGlobal = new TablaSimbolos("Global", null);
+    public TablaSimbolos tablaActual = tablaGlobal;
+    {
+    reporteTablas.add(tablaGlobal);
+    }
+    // Método para iniciar (llamar desde el Main antes de parse())
+    public void init() {
+        reporteTablas.add(tablaGlobal);
+    }
+
+    // Entrar a un nuevo ámbito
+    public void entrarAmbito(String nombre) {
+        TablaSimbolos nuevaTabla = new TablaSimbolos(nombre, tablaActual);
+        tablaActual = nuevaTabla; // El puntero baja
+        reporteTablas.add(tablaActual); // La guardamos para el reporte
+    }
+
+    // Salir del ámbito actual
+    public void salirAmbito() {
+        if (tablaActual.padre != null) {
+            tablaActual = tablaActual.padre; // El puntero sube
+        }
+    }
+    
+    public void imprimirTablas() {
+        for (TablaSimbolos t : reporteTablas) {
+            t.imprimir();
+        }
+    }
+
+
+    public void syntax_error(Symbol s) {
+            String lexema = (s.value != null) ? s.value.toString() : "Token desconocido";
+            int linea = s.right;   // En CUP, right suele guardar la línea
+            int columna = s.left;  // En CUP, left suele guardar la columna
+
+            System.out.println("(!) Error Sintactico Recuperado: " + lexema + " en linea: " + linea);
+
+            // Guardar el error en la lista para el reporte final
+            listaErrores.add(new Errores("Sintactico", "Token inesperado: " + lexema, linea, columna));
+        }
+
+
+    public void unrecovered_syntax_error(Symbol s) {
+            String lexema = (s.value != null) ? s.value.toString() : "Token desconocido";
+            int linea = s.right;
+            int columna = s.left;
+
+            System.out.println("(!) Error Sintactico IRRECUPERABLE: " + lexema + " en linea: " + linea);
+
+            listaErrores.add(new Errores("Sintactico Fatal", "No se pudo recuperar del error", linea, columna));
+        }
+
+:}
 
 /* Terminals (tokens returned by the scanner). */
 terminal SEMI, UMINUS;
@@ -35,15 +100,271 @@ terminal AND, OR, NOT;
 terminal INT, FLOAT, BOOLEAN, CHAR, STRING;
 
 /* identificadores y literales */
-terminal IDENTIFIER;
-terminal INTEGER_LITERAL;
-terminal FLOAT_LITERAL;
+terminal String IDENTIFIER;
+terminal Integer INTEGER_LITERAL;
+terminal Float FLOAT_LITERAL;
 terminal BOOL_LITERAL;
 terminal CHAR_LITERAL;
 terminal STRING_LITERAL;
 
-non terminal program;
+/* NO TERMINALES */
+non terminal program, bloque;
+non terminal String tipo;
+non terminal lista_declaracion, declaracion;
+non terminal declaracion_global;
+non terminal declaracion_funcion;
+non terminal declaracion_main;
+non terminal declaracion_local;
+non terminal asignacion_stmt;
+non terminal expresion_stmt;
+non terminal control_stmt;
+non terminal decide_stmt;
+non terminal loop_stmt;
+non terminal for_stmt;
+non terminal decide_cases;
+non terminal decide_case;
+non terminal array_dim, array_init, array_valores;
+non terminal declaracion_for;
 
+non terminal stmt_lista, stmt;
+non terminal expresion, expresion_logica, expresion_rel, expresion_arit;
+non terminal termino, factor;
+non terminal param_lista, param_lista_opt;
+non terminal arg_lista, arg_lista_opt;
+non terminal array_rows, array_row;
+
+ 
+
+/* PRECEDENCIA */
+precedence left OR;
+precedence left AND;
+precedence right NOT;
+precedence left IQIQ, DIFQ;
+precedence left MAQ, MEQ, MAIQ, MEIQ;
+precedence left PLUS, MINUS;
+precedence left TIMES, DIV, DIVINT, MOD;
+precedence right POW, INC, DEC;
+precedence right UMINUS;
+
+/* PRODUCCION INICIAL */
 start with program;
 
-program ::= ;
+/* Produccion inicial */
+program ::= lista_declaracion ;
+
+lista_declaracion ::= lista_declaracion declaracion | declaracion;
+
+declaracion ::= declaracion_global | declaracion_funcion | declaracion_main;
+
+/* --- Variables Globales --- */
+declaracion_global ::= 
+      WORLD tipo:t IDENTIFIER:id ENDL 
+      {: 
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
+          p.tablaGlobal.insertar(s);
+          System.out.println("Variable global detectada: " + id);
+      :}
+    | WORLD tipo:t IDENTIFIER:id IQ expresion ENDL 
+      {: 
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
+          p.tablaGlobal.insertar(s);
+          
+          System.out.println("Variable global detectada (con valor): " + id);
+      :};
+
+
+
+/* --- Declaración Main (Navidad) --- */
+declaracion_main ::= 
+    COAL NAVIDAD:id 
+    {: 
+        Parser p = (Parser)parser;
+        Simbolo s = new Simbolo("navidad", "coal", "Main", p.tablaActual.nombreAmbito, idleft, idright);
+        p.tablaActual.insertar(s);
+        p.entrarAmbito("Main_Navidad");
+    :} 
+    PARENI PAREND bloque
+    {: 
+        ((Parser)parser).salirAmbito(); 
+    :};
+
+
+
+/* --- Declaración de Funciones --- */
+declaracion_funcion ::= 
+    GIFT tipo:t IDENTIFIER:id 
+    {: 
+        Parser p = (Parser)parser;
+        // Insertar funcion en scope actual (Global)
+        Simbolo s = new Simbolo(id, t, "Funcion", p.tablaActual.nombreAmbito, idleft, idright);
+        p.tablaActual.insertar(s);
+        
+        // Entrar al ámbito de la función (para los parámetros)
+        p.entrarAmbito("Funcion_" + id); 
+    :}
+    PARENI param_lista_opt PAREND 
+    bloque 
+    {: 
+        // Al terminar la función, salimos del ámbito de la función
+        ((Parser)parser).salirAmbito(); 
+    :};
+
+
+/* Manejo de Bloques*/
+bloque ::= 
+    BLOQUE_ABI 
+    {: 
+        Parser p = (Parser)parser;
+        // Crear tabla para el bloque
+        p.entrarAmbito("Bloque_" + p.tablaActual.nombreAmbito); 
+    :}
+    stmt_lista 
+    BLOQUE_CER
+    {: 
+        // Cerrar tabla del bloque
+        ((Parser)parser).salirAmbito(); 
+    :};
+
+
+stmt_lista ::= stmt_lista stmt | stmt;
+
+stmt ::= declaracion_local 
+       | asignacion_stmt 
+       | expresion_stmt 
+       | control_stmt       
+       | RETURN expresion ENDL 
+       | BREAK ENDL
+       | SHOW expresion ENDL
+       | GET IDENTIFIER:id ENDL
+       | error ENDL;
+
+
+param_lista_opt ::= param_lista | /* vacío */;
+
+param_lista ::= param_lista COMA tipo:t IDENTIFIER:id
+    {: 
+        Parser p = (Parser)parser;
+        Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
+        p.tablaActual.insertar(s);
+    :}
+    | tipo:t IDENTIFIER:id
+    {: 
+        Parser p = (Parser)parser;
+        Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
+        p.tablaActual.insertar(s);
+    :};
+
+arg_lista_opt ::= arg_lista | /* vacío */;
+
+arg_lista ::= arg_lista COMA expresion | expresion;
+
+
+declaracion_local ::= 
+      // 1. Variable normal: local int x endl
+      LOCAL tipo:t IDENTIFIER:id ENDL 
+      {: 
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
+          p.tablaActual.insertar(s);
+      :}
+      
+    | // 2. Variable con asignación: local int x = 5 endl
+      LOCAL tipo:t IDENTIFIER:id IQ expresion ENDL
+      {: 
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
+          p.tablaActual.insertar(s);
+      :}
+
+    | // 3. Arreglo 2D sin asignación: local int m[2][2] endl
+      LOCAL tipo:t IDENTIFIER:id array_dim ENDL
+      {:
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
+          p.tablaActual.insertar(s);
+      :}
+      
+    | // 4. Arreglo 2D con asignación: local int m[2][2] = ¡¡1,2!¡3,4!! endl
+      LOCAL tipo:t IDENTIFIER:id array_dim IQ array_init ENDL
+      {:
+          Parser p = (Parser)parser;
+          Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
+          p.tablaActual.insertar(s);
+      :};
+
+/*REGLAS AUXILIARES PARA ARREGLOS*/
+array_dim ::= BRACKETI INTEGER_LITERAL BRACKETD BRACKETI INTEGER_LITERAL BRACKETD;
+
+// Soporta inicialización ¡ 1, 2 ! o ¡¡1,2!¡3,4!!
+array_init ::= BLOQUE_ABI array_rows BLOQUE_CER;
+
+array_rows ::= array_row 
+             | array_rows array_row;
+
+array_row ::= BLOQUE_ABI array_valores BLOQUE_CER;
+
+array_valores ::= expresion 
+                | array_valores COMA expresion;
+
+
+asignacion_stmt ::= IDENTIFIER IQ expresion ENDL;
+
+expresion_stmt ::= expresion ENDL;
+
+control_stmt ::= decide_stmt | loop_stmt | for_stmt;
+
+decide_stmt ::= DECIDE OF decide_cases END DECIDE ENDL;
+
+
+decide_cases ::= decide_cases decide_case | decide_case;
+
+decide_case ::= expresion ARROW bloque | ELSE ARROW bloque;
+
+
+/* --- Loops y Control --- */
+loop_stmt ::= 
+    LOOP 
+    {: ((Parser)parser).entrarAmbito("Loop"); :}
+    stmt_lista EXIT WHEN expresion ENDL END LOOP ENDL
+    {: ((Parser)parser).salirAmbito(); :};
+
+
+
+for_stmt ::= 
+    FOR PARENI 
+    {: ((Parser)parser).entrarAmbito("For_Header"); :} 
+    declaracion_for  // Antes era asignacion_stmt
+    expresion ENDL 
+    expresion        // Antes era asignacion_stmt, cambiado a expresion para soportar ++i
+    PAREND 
+    bloque 
+    {: ((Parser)parser).salirAmbito(); :};
+
+
+
+declaracion_for ::= 
+      tipo IDENTIFIER IQ expresion ENDL 
+    | IDENTIFIER IQ expresion ENDL;
+
+
+tipo ::= INT      {: RESULT = "int"; :}
+       | FLOAT    {: RESULT = "float"; :}
+       | BOOLEAN  {: RESULT = "boolean"; :}
+       | CHAR     {: RESULT = "char"; :}
+       | STRING   {: RESULT = "string"; :};
+
+
+expresion ::= expresion_logica;
+
+expresion_logica ::= expresion_logica AND expresion_logica | expresion_logica OR expresion_logica | NOT expresion_logica | expresion_rel;
+
+expresion_rel ::= expresion_arit IQIQ expresion_arit | expresion_arit DIFQ expresion_arit | expresion_arit MAQ expresion_arit | expresion_arit MEQ expresion_arit | expresion_arit MAIQ expresion_arit | expresion_arit MEIQ expresion_arit | expresion_arit;
+
+expresion_arit ::= expresion_arit PLUS termino | expresion_arit MINUS termino | termino;
+
+
+termino ::= termino TIMES factor | termino DIV factor | termino DIVINT factor | termino MOD factor | factor;
+
+factor ::= INTEGER_LITERAL | FLOAT_LITERAL | BOOL_LITERAL | CHAR_LITERAL | STRING_LITERAL | IDENTIFIER | IDENTIFIER BRACKETI expresion BRACKETD BRACKETI expresion BRACKETD | IDENTIFIER PARENI arg_lista_opt PAREND | MINUS factor %prec UMINUS | INC IDENTIFIER | DEC IDENTIFIER | PARENI expresion PAREND;
