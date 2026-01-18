@@ -35,7 +35,7 @@ public class TablaSimbolos {
     }
 
     public void imprimir() {
-        System.out.println("===== TABLA: " + nombreAmbito + " =====");
+        System.out.println("*****TABLA: " + nombreAmbito + "*****");
         if (padre != null) System.out.println("Padre: " + padre.nombreAmbito);
         for (Simbolo s : tabla.values()) {
             System.out.println(String.format("%-10s | %-10s | %-15s | %s", 

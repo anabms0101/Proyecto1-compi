@@ -3,13 +3,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 
+/* ----------------------------------------------------------------------------
+   PARSER CODE
+   El objetivo es inyectar variables y métodos auxiliares dentro de la clase Parser 
+   generada. Se gestiona el estado global del análisis.
+   ---------------------------------------------------------------------------- */
 
 parser code {:
-    // Lista para guardar TODAS las tablas y poder imprimirlas al final
+    // Almacena todas las tablas de ámbitos creadas (Global, Main, Funciones, Bloques)
     public ArrayList<TablaSimbolos> reporteTablas = new ArrayList<>();
+
+    // Almacena los errores encontrados (Léxicos y Sintácticos)
     public ArrayList<Errores> listaErrores = new ArrayList<>();
+
+    // Variable Raíz del Árbol Sintáctico  
+    public NodoCST raiz;
     
-    // Tabla actual (inicialmente la global)
+    // Punteros para el manejo de Ámbitos (Scopes)
     public TablaSimbolos tablaGlobal = new TablaSimbolos("Global", null);
     public TablaSimbolos tablaActual = tablaGlobal;
     {
@@ -20,7 +30,8 @@ parser code {:
         reporteTablas.add(tablaGlobal);
     }
 
-    // Entrar a un nuevo ámbito
+    // --- MANEJO DE ÁMBITOS (SCOPES) ---
+    // Simula una pila de tablas. Cuando entramos a { bajamos, cuando salimos } subimos.
     public void entrarAmbito(String nombre) {
         TablaSimbolos nuevaTabla = new TablaSimbolos(nombre, tablaActual);
         tablaActual = nuevaTabla; // El puntero baja
@@ -40,7 +51,9 @@ parser code {:
         }
     }
 
-
+    // --- MANEJO DE ERRORES (MODO PÁNICO) ---
+    // Este método se dispara cuando el parser encuentra un error pero logra
+    // recuperarse usando la regla 'error'. No detiene la compilación.
     public void syntax_error(Symbol s) {
             String lexema = (s.value != null) ? s.value.toString() : "Token desconocido";
             int linea = s.right;   // En CUP, right suele guardar la línea
@@ -52,7 +65,7 @@ parser code {:
             listaErrores.add(new Errores("Sintactico", "Token inesperado: " + lexema, linea, columna));
         }
 
-
+    // Se dispara cuando el error es tan grave que no hay regla de recuperación posible.
     public void unrecovered_syntax_error(Symbol s) {
             String lexema = (s.value != null) ? s.value.toString() : "Token desconocido";
             int linea = s.right;
@@ -107,31 +120,38 @@ terminal BOOL_LITERAL;
 terminal CHAR_LITERAL;
 terminal STRING_LITERAL;
 
-/* NO TERMINALES */
-non terminal program, bloque;
-non terminal String tipo;
-non terminal lista_declaracion, declaracion;
-non terminal declaracion_global;
-non terminal declaracion_funcion;
-non terminal declaracion_main;
-non terminal declaracion_local;
-non terminal asignacion_stmt;
-non terminal expresion_stmt;
-non terminal control_stmt;
-non terminal decide_stmt;
-non terminal loop_stmt;
-non terminal for_stmt;
-non terminal decide_cases;
-non terminal decide_case;
-non terminal array_dim, array_init, array_valores;
-non terminal declaracion_for;
 
-non terminal stmt_lista, stmt;
-non terminal expresion, expresion_logica, expresion_rel, expresion_arit;
-non terminal termino, factor;
-non terminal param_lista, param_lista_opt;
-non terminal arg_lista, arg_lista_opt;
-non terminal array_rows, array_row;
+/* 
+   Casi todos los no terminales retornan un 'NodoCST'. Esto significa que cada regla
+   gramatical, al ejecutarse, construye un pedacito del árbol y se lo pasa a su padre.
+*/
+
+/* NO TERMINALES */
+non terminal NodoCST program, bloque;
+non terminal NodoCST lista_declaracion, declaracion;
+non terminal NodoCST declaracion_global;
+non terminal NodoCST declaracion_funcion;
+non terminal NodoCST declaracion_main;
+non terminal NodoCST declaracion_local;
+non terminal NodoCST asignacion_stmt;
+non terminal NodoCST expresion_stmt;
+non terminal NodoCST control_stmt;
+non terminal NodoCST decide_stmt;
+non terminal NodoCST loop_stmt;
+non terminal NodoCST for_stmt;
+non terminal NodoCST decide_cases;
+non terminal NodoCST decide_case;
+non terminal NodoCST array_dim, array_init, array_valores;
+non terminal NodoCST declaracion_for;
+
+non terminal NodoCST stmt_lista, stmt;
+non terminal NodoCST expresion, expresion_logica, expresion_rel, expresion_arit;
+non terminal NodoCST termino, factor;
+non terminal NodoCST param_lista, param_lista_opt;
+non terminal NodoCST arg_lista, arg_lista_opt;
+non terminal NodoCST array_rows, array_row;
+
+non terminal String tipo;
 
  
 
@@ -146,208 +166,262 @@ precedence left TIMES, DIV, DIVINT, MOD;
 precedence right POW, INC, DEC;
 precedence right UMINUS;
 
+// La gramática define la estructura del lenguaje y qué hacer cuando se reconoce algo.
+
 /* PRODUCCION INICIAL */
 start with program;
 
+
 /* Produccion inicial */
-program ::= lista_declaracion ;
+// Conectar la lista de declaraciones con la raíz del parser.
+program ::= lista_declaracion:l 
+    {: 
+        NodoCST n = new NodoCST("PROGRAMA");
+        n.addHijo(l);
+        parser.raiz = n; // Guardamos la raiz
+        RESULT = n; 
+    :};
 
-lista_declaracion ::= lista_declaracion declaracion | declaracion;
+// Recursividad para admitir múltiples declaraciones
+lista_declaracion ::= lista_declaracion:l declaracion:d 
+    {: 
+        NodoCST n = new NodoCST("LISTA_DECL");
+        n.addHijo(l); n.addHijo(d);
+        RESULT = n; 
+    :}
+    | declaracion:d
+    {: 
+        NodoCST n = new NodoCST("LISTA_DECL");
+        n.addHijo(d);
+        RESULT = n; 
+    :};
 
-declaracion ::= declaracion_global | declaracion_funcion | declaracion_main;
 
-/* --- Variables Globales --- */
+declaracion ::= declaracion_global:d {: RESULT = d; :} 
+              | declaracion_funcion:d {: RESULT = d; :} 
+              | declaracion_main:d {: RESULT = d; :};
+
+
+
+/* Variables Globales */
+/* DECLARACIÓN GLOBAL
+   Insertar la variable en la Tabla de Símbolos Global.
+   Crear el nodo visual del árbol con sus hijos (tipo, id, valor).
+*/
 declaracion_global ::= 
       WORLD tipo:t IDENTIFIER:id ENDL 
       {: 
+
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
           p.tablaGlobal.insertar(s);
           System.out.println("Variable global detectada: " + id);
+          
+          NodoCST n = new NodoCST("DECL_GLOBAL");
+          n.addHijo("world"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("endl");
+          RESULT = n;
       :}
-    | WORLD tipo:t IDENTIFIER:id IQ expresion ENDL 
+    | WORLD tipo:t IDENTIFIER:id IQ expresion:e ENDL 
       {: 
+          // TU LOGICA EXISTENTE
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
           p.tablaGlobal.insertar(s);
-          
           System.out.println("Variable global detectada (con valor): " + id);
+          
+          // NUEVA LOGICA DE ARBOL
+          NodoCST n = new NodoCST("DECL_GLOBAL_INIT");
+          n.addHijo("world"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl");
+          RESULT = n;
       :};
 
 
 
-/* --- Declaración Main (Navidad) --- */
 declaracion_main ::= 
     COAL NAVIDAD:id 
     {: 
+        // TU LOGICA EXISTENTE
         Parser p = (Parser)parser;
         Simbolo s = new Simbolo("navidad", "coal", "Main", p.tablaActual.nombreAmbito, idleft, idright);
         p.tablaActual.insertar(s);
         p.entrarAmbito("Main_Navidad");
     :} 
-    PARENI PAREND bloque
+    PARENI PAREND bloque:b
     {: 
+        // TU LOGICA EXISTENTE
         ((Parser)parser).salirAmbito(); 
+        
+        // NUEVA LOGICA DE ARBOL
+        NodoCST n = new NodoCST("MAIN");
+        n.addHijo("coal"); n.addHijo("navidad"); n.addHijo("¿"); n.addHijo("?"); n.addHijo(b);
+        RESULT = n;
     :};
 
 
-
-/* --- Declaración de Funciones --- */
+/* 
+   Declarar funciones con parámetros.
+   Insertar la función en la tabla actual y crear un nuevo ámbito hijo.
+   Crear el nodo "FUNCION" conteniendo su tipo, nombre y cuerpo.
+*/
 declaracion_funcion ::= 
     GIFT tipo:t IDENTIFIER:id 
     {: 
         Parser p = (Parser)parser;
-        // Insertar funcion en scope actual (Global)
         Simbolo s = new Simbolo(id, t, "Funcion", p.tablaActual.nombreAmbito, idleft, idright);
         p.tablaActual.insertar(s);
-        
-        // Entrar al ámbito de la función (para los parámetros)
         p.entrarAmbito("Funcion_" + id); 
     :}
-    PARENI param_lista_opt PAREND 
-    bloque 
+    PARENI param_lista_opt:p PAREND 
+    bloque:b 
     {: 
-        // Al terminar la función, salimos del ámbito de la función
         ((Parser)parser).salirAmbito(); 
+        
+        NodoCST n = new NodoCST("FUNCION");
+        n.addHijo("gift"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("¿"); n.addHijo(p); n.addHijo("?"); n.addHijo(b);
+        RESULT = n;
     :};
 
 
-/* Manejo de Bloques*/
+/*
+   Agrupar múltiples sentencias.
+   Cada bloque crea su propio ámbito (variables locales mueren al salir).
+*/
 bloque ::= 
     BLOQUE_ABI 
-    {: 
-        Parser p = (Parser)parser;
-        // Crear tabla para el bloque
-        p.entrarAmbito("Bloque_" + p.tablaActual.nombreAmbito); 
-    :}
-    stmt_lista 
+    {: Parser p = (Parser)parser; p.entrarAmbito("Bloque_" + p.tablaActual.nombreAmbito); :}
+    stmt_lista:l 
     BLOQUE_CER
     {: 
-        // Cerrar tabla del bloque
         ((Parser)parser).salirAmbito(); 
+        NodoCST n = new NodoCST("BLOQUE");
+        n.addHijo("¡"); n.addHijo(l); n.addHijo("!");
+        RESULT = n;
     :};
 
 
-stmt_lista ::= stmt_lista stmt | stmt;
+/* SENTENCIAS (STMT)
+   Definen qué puede ir dentro de un bloque de código.
+*/
 
-stmt ::= declaracion_local 
-       | asignacion_stmt 
-       | expresion_stmt 
-       | control_stmt       
-       | RETURN expresion ENDL 
-       | BREAK ENDL
-       | SHOW expresion ENDL
-       | GET IDENTIFIER:id ENDL
-       | error ENDL;
+stmt_lista ::= stmt_lista:l stmt:s {: NodoCST n = new NodoCST("STMT_LIST"); n.addHijo(l); n.addHijo(s); RESULT = n; :}
+             | stmt:s {: NodoCST n = new NodoCST("STMT_LIST"); n.addHijo(s); RESULT = n; :};
 
 
-param_lista_opt ::= param_lista | /* vacío */;
+stmt ::= declaracion_local:d {: RESULT = d; :}
+       | asignacion_stmt:a   {: RESULT = a; :}
+       | expresion_stmt:e    {: RESULT = e; :}
+       | control_stmt:c      {: RESULT = c; :}
+       | RETURN expresion:e ENDL {: NodoCST n = new NodoCST("RETURN"); n.addHijo("return"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
+       | BREAK ENDL {: NodoCST n = new NodoCST("BREAK"); n.addHijo("break"); n.addHijo("endl"); RESULT = n; :}
+       | SHOW expresion:e ENDL {: NodoCST n = new NodoCST("SHOW"); n.addHijo("show"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
+       | GET IDENTIFIER:id ENDL {: NodoCST n = new NodoCST("GET"); n.addHijo("get"); n.addHijo(id); n.addHijo("endl"); RESULT = n; :}
+       | error ENDL {: NodoCST n = new NodoCST("ERROR_RECUPERADO"); RESULT = n; :};
 
-param_lista ::= param_lista COMA tipo:t IDENTIFIER:id
+
+param_lista_opt ::= param_lista:l {: RESULT = l; :} | /* vacío */ {: RESULT = new NodoCST("VACIO"); :};
+
+param_lista ::= param_lista:l COMA tipo:t IDENTIFIER:id
     {: 
         Parser p = (Parser)parser;
         Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
         p.tablaActual.insertar(s);
+        
+        NodoCST n = new NodoCST("PARAMS"); n.addHijo(l); n.addHijo(","); n.addHijo(new NodoCST(t)); n.addHijo(id); RESULT = n;
     :}
     | tipo:t IDENTIFIER:id
     {: 
         Parser p = (Parser)parser;
         Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
         p.tablaActual.insertar(s);
+        
+        NodoCST n = new NodoCST("PARAM"); n.addHijo(new NodoCST(t)); n.addHijo(id); RESULT = n;
     :};
 
-arg_lista_opt ::= arg_lista | /* vacío */;
-
-arg_lista ::= arg_lista COMA expresion | expresion;
+arg_lista_opt ::= arg_lista:l {: RESULT = l; :} | /* vacío */ {: RESULT = new NodoCST("VACIO"); :};
+arg_lista ::= arg_lista:l COMA expresion:e {: NodoCST n = new NodoCST("ARGS"); n.addHijo(l); n.addHijo(","); n.addHijo(e); RESULT = n; :} 
+            | expresion:e {: RESULT = e; :};
 
 
 declaracion_local ::= 
-      // 1. Variable normal: local int x endl
       LOCAL tipo:t IDENTIFIER:id ENDL 
       {: 
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
           p.tablaActual.insertar(s);
+          
+          NodoCST n = new NodoCST("DECL_LOCAL"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("endl"); RESULT = n;
       :}
-      
-    | // 2. Variable con asignación: local int x = 5 endl
-      LOCAL tipo:t IDENTIFIER:id IQ expresion ENDL
+    | LOCAL tipo:t IDENTIFIER:id IQ expresion:e ENDL
       {: 
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
           p.tablaActual.insertar(s);
+          
+          NodoCST n = new NodoCST("DECL_LOCAL_INIT"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n;
       :}
-
-    | // 3. Arreglo 2D sin asignación: local int m[2][2] endl
-      LOCAL tipo:t IDENTIFIER:id array_dim ENDL
+    | LOCAL tipo:t IDENTIFIER:id array_dim:d ENDL
       {:
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
           p.tablaActual.insertar(s);
+          
+          NodoCST n = new NodoCST("DECL_ARRAY"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo(d); n.addHijo("endl"); RESULT = n;
       :}
-      
-    | // 4. Arreglo 2D con asignación: local int m[2][2] = ¡¡1,2!¡3,4!! endl
-      LOCAL tipo:t IDENTIFIER:id array_dim IQ array_init ENDL
+    | LOCAL tipo:t IDENTIFIER:id array_dim:d IQ array_init:i ENDL
       {:
           Parser p = (Parser)parser;
           Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
           p.tablaActual.insertar(s);
+          
+          NodoCST n = new NodoCST("DECL_ARRAY_INIT"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo(d); n.addHijo("="); n.addHijo(i); n.addHijo("endl"); RESULT = n;
       :};
 
 /*REGLAS AUXILIARES PARA ARREGLOS*/
-array_dim ::= BRACKETI INTEGER_LITERAL BRACKETD BRACKETI INTEGER_LITERAL BRACKETD;
+array_dim ::= BRACKETI INTEGER_LITERAL:i1 BRACKETD BRACKETI INTEGER_LITERAL:i2 BRACKETD
+    {: NodoCST n = new NodoCST("DIMENSION"); n.addHijo("["); n.addHijo(i1.toString()); n.addHijo("]"); n.addHijo("["); n.addHijo(i2.toString()); n.addHijo("]"); RESULT = n; :};
 
-// Soporta inicialización ¡ 1, 2 ! o ¡¡1,2!¡3,4!!
-array_init ::= BLOQUE_ABI array_rows BLOQUE_CER;
+array_init ::= BLOQUE_ABI array_rows:r BLOQUE_CER {: NodoCST n = new NodoCST("ARRAY_INIT"); n.addHijo("¡"); n.addHijo(r); n.addHijo("!"); RESULT = n; :};
 
-array_rows ::= array_row 
-             | array_rows array_row;
+array_rows ::= array_rows:rs array_row:r {: NodoCST n = new NodoCST("FILAS"); n.addHijo(rs); n.addHijo(r); RESULT = n; :}
+             | array_row:r {: RESULT = r; :};
 
-array_row ::= BLOQUE_ABI array_valores BLOQUE_CER;
+array_row ::= BLOQUE_ABI array_valores:v BLOQUE_CER {: NodoCST n = new NodoCST("FILA"); n.addHijo("¡"); n.addHijo(v); n.addHijo("!"); RESULT = n; :};
 
-array_valores ::= expresion 
-                | array_valores COMA expresion;
-
-
-asignacion_stmt ::= IDENTIFIER IQ expresion ENDL;
-
-expresion_stmt ::= expresion ENDL;
-
-control_stmt ::= decide_stmt | loop_stmt | for_stmt;
-
-decide_stmt ::= DECIDE OF decide_cases END DECIDE ENDL;
+array_valores ::= expresion:e {: RESULT = e; :} 
+                | array_valores:v COMA expresion:e {: NodoCST n = new NodoCST("VALORES"); n.addHijo(v); n.addHijo(","); n.addHijo(e); RESULT = n; :};
 
 
-decide_cases ::= decide_cases decide_case | decide_case;
+asignacion_stmt ::= IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("ASIGNACION"); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
+expresion_stmt ::= expresion:e ENDL {: NodoCST n = new NodoCST("EXP_STMT"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
+control_stmt ::= decide_stmt:d {: RESULT = d; :} | loop_stmt:l {: RESULT = l; :} | for_stmt:f {: RESULT = f; :};
 
-decide_case ::= expresion ARROW bloque | ELSE ARROW bloque;
+
+
+
+decide_stmt ::= DECIDE OF decide_cases:c END DECIDE ENDL {: NodoCST n = new NodoCST("DECIDE"); n.addHijo("decide of"); n.addHijo(c); n.addHijo("end decide endl"); RESULT = n; :};
+decide_cases ::= decide_cases:cs decide_case:c {: NodoCST n = new NodoCST("CASES"); n.addHijo(cs); n.addHijo(c); RESULT = n; :} | decide_case:c {: RESULT = c; :};
+decide_case ::= expresion:e ARROW bloque:b {: NodoCST n = new NodoCST("CASE"); n.addHijo(e); n.addHijo("->"); n.addHijo(b); RESULT = n; :}
+              | ELSE ARROW bloque:b {: NodoCST n = new NodoCST("CASE_ELSE"); n.addHijo("else"); n.addHijo("->"); n.addHijo(b); RESULT = n; :};
 
 
 /* --- Loops y Control --- */
-loop_stmt ::= 
-    LOOP 
-    {: ((Parser)parser).entrarAmbito("Loop"); :}
-    stmt_lista EXIT WHEN expresion ENDL END LOOP ENDL
-    {: ((Parser)parser).salirAmbito(); :};
+loop_stmt ::= LOOP {: ((Parser)parser).entrarAmbito("Loop"); :} stmt_lista:l EXIT WHEN expresion:e ENDL END LOOP ENDL
+    {: 
+       ((Parser)parser).salirAmbito(); 
+       NodoCST n = new NodoCST("LOOP"); n.addHijo("loop"); n.addHijo(l); n.addHijo("exit when"); n.addHijo(e); n.addHijo("end loop"); RESULT = n; 
+    :};
+
+
+for_stmt ::= FOR PARENI {: ((Parser)parser).entrarAmbito("For_Header"); :} declaracion_for:d expresion:e1 ENDL expresion:e2 PAREND bloque:b
+    {: 
+       ((Parser)parser).salirAmbito(); 
+       NodoCST n = new NodoCST("FOR"); n.addHijo("for"); n.addHijo("¿"); n.addHijo(d); n.addHijo(e1); n.addHijo("endl"); n.addHijo(e2); n.addHijo("?"); n.addHijo(b); RESULT = n; 
+    :};
 
 
 
-for_stmt ::= 
-    FOR PARENI 
-    {: ((Parser)parser).entrarAmbito("For_Header"); :} 
-    declaracion_for  // Antes era asignacion_stmt
-    expresion ENDL 
-    expresion        // Antes era asignacion_stmt, cambiado a expresion para soportar ++i
-    PAREND 
-    bloque 
-    {: ((Parser)parser).salirAmbito(); :};
-
-
-
-declaracion_for ::= 
-      tipo IDENTIFIER IQ expresion ENDL 
-    | IDENTIFIER IQ expresion ENDL;
-
+declaracion_for ::= tipo:t IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("DEC_FOR"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
+                  | IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("ASIG_FOR"); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
 
 tipo ::= INT      {: RESULT = "int"; :}
        | FLOAT    {: RESULT = "float"; :}
@@ -356,15 +430,41 @@ tipo ::= INT      {: RESULT = "int"; :}
        | STRING   {: RESULT = "string"; :};
 
 
-expresion ::= expresion_logica;
+expresion ::= expresion_logica:e {: RESULT = e; :};
 
-expresion_logica ::= expresion_logica AND expresion_logica | expresion_logica OR expresion_logica | NOT expresion_logica | expresion_rel;
+expresion_logica ::= expresion_logica:e1 AND expresion_logica:e2 {: NodoCST n = new NodoCST("AND"); n.addHijo(e1); n.addHijo("@"); n.addHijo(e2); RESULT = n; :}
+                   | expresion_logica:e1 OR expresion_logica:e2 {: NodoCST n = new NodoCST("OR"); n.addHijo(e1); n.addHijo("~"); n.addHijo(e2); RESULT = n; :}
+                   | NOT expresion_logica:e {: NodoCST n = new NodoCST("NOT"); n.addHijo("Σ"); n.addHijo(e); RESULT = n; :}
+                   | expresion_rel:e {: RESULT = e; :};
 
-expresion_rel ::= expresion_arit IQIQ expresion_arit | expresion_arit DIFQ expresion_arit | expresion_arit MAQ expresion_arit | expresion_arit MEQ expresion_arit | expresion_arit MAIQ expresion_arit | expresion_arit MEIQ expresion_arit | expresion_arit;
+expresion_rel ::= expresion_arit:e1 IQIQ expresion_arit:e2 {: NodoCST n = new NodoCST("EQ"); n.addHijo(e1); n.addHijo("=="); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e1 DIFQ expresion_arit:e2 {: NodoCST n = new NodoCST("NEQ"); n.addHijo(e1); n.addHijo("!="); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e1 MAQ expresion_arit:e2 {: NodoCST n = new NodoCST("GT"); n.addHijo(e1); n.addHijo(">"); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e1 MEQ expresion_arit:e2 {: NodoCST n = new NodoCST("LT"); n.addHijo(e1); n.addHijo("<"); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e1 MAIQ expresion_arit:e2 {: NodoCST n = new NodoCST("GTE"); n.addHijo(e1); n.addHijo(">="); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e1 MEIQ expresion_arit:e2 {: NodoCST n = new NodoCST("LTE"); n.addHijo(e1); n.addHijo("<="); n.addHijo(e2); RESULT = n; :}
+                | expresion_arit:e {: RESULT = e; :};
 
-expresion_arit ::= expresion_arit PLUS termino | expresion_arit MINUS termino | termino;
+expresion_arit ::= expresion_arit:e1 PLUS termino:e2 {: NodoCST n = new NodoCST("SUMA"); n.addHijo(e1); n.addHijo("+"); n.addHijo(e2); RESULT = n; :}
+                 | expresion_arit:e1 MINUS termino:e2 {: NodoCST n = new NodoCST("RESTA"); n.addHijo(e1); n.addHijo("-"); n.addHijo(e2); RESULT = n; :}
+                 | termino:t {: RESULT = t; :};
 
 
-termino ::= termino TIMES factor | termino DIV factor | termino DIVINT factor | termino MOD factor | factor;
+termino ::= termino:t TIMES factor:f {: NodoCST n = new NodoCST("MULT"); n.addHijo(t); n.addHijo("*"); n.addHijo(f); RESULT = n; :}
+          | termino:t DIV factor:f {: NodoCST n = new NodoCST("DIV"); n.addHijo(t); n.addHijo("/"); n.addHijo(f); RESULT = n; :}
+          | termino:t DIVINT factor:f {: NodoCST n = new NodoCST("DIVINT"); n.addHijo(t); n.addHijo("//"); n.addHijo(f); RESULT = n; :}
+          | termino:t MOD factor:f {: NodoCST n = new NodoCST("MOD"); n.addHijo(t); n.addHijo("%"); n.addHijo(f); RESULT = n; :}
+          | factor:f {: RESULT = f; :};
 
-factor ::= INTEGER_LITERAL | FLOAT_LITERAL | BOOL_LITERAL | CHAR_LITERAL | STRING_LITERAL | IDENTIFIER | IDENTIFIER BRACKETI expresion BRACKETD BRACKETI expresion BRACKETD | IDENTIFIER PARENI arg_lista_opt PAREND | MINUS factor %prec UMINUS | INC IDENTIFIER | DEC IDENTIFIER | PARENI expresion PAREND;
+factor ::= INTEGER_LITERAL:v {: RESULT = new NodoCST(v.toString()); :}
+         | FLOAT_LITERAL:v   {: RESULT = new NodoCST(v.toString()); :}
+         | BOOL_LITERAL:v    {: RESULT = new NodoCST(v.toString()); :}
+         | CHAR_LITERAL:v    {: RESULT = new NodoCST(v.toString()); :}
+         | STRING_LITERAL:v  {: RESULT = new NodoCST(v.toString()); :}
+         | IDENTIFIER:id     {: RESULT = new NodoCST(id); :}
+         | IDENTIFIER:id BRACKETI expresion:e1 BRACKETD BRACKETI expresion:e2 BRACKETD {: NodoCST n = new NodoCST("ACCESO_ARRAY"); n.addHijo(id); n.addHijo("["); n.addHijo(e1); n.addHijo("]"); n.addHijo("["); n.addHijo(e2); n.addHijo("]"); RESULT = n; :}
+         | IDENTIFIER:id PARENI arg_lista_opt:a PAREND {: NodoCST n = new NodoCST("LLAMADA"); n.addHijo(id); n.addHijo("("); n.addHijo(a); n.addHijo(")"); RESULT = n; :}
+         | MINUS factor:f {: NodoCST n = new NodoCST("NEGACION"); n.addHijo("-"); n.addHijo(f); RESULT = n; :} %prec UMINUS
+         | INC IDENTIFIER:id {: NodoCST n = new NodoCST("INC"); n.addHijo("++"); n.addHijo(id); RESULT = n; :}
+         | DEC IDENTIFIER:id {: NodoCST n = new NodoCST("DEC"); n.addHijo("--"); n.addHijo(id); RESULT = n; :}
+         | PARENI expresion:e PAREND {: NodoCST n = new NodoCST("AGRUPACION"); n.addHijo("("); n.addHijo(e); n.addHijo(")"); RESULT = n; :};

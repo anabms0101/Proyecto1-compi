@@ -18,6 +18,12 @@ public class Parser1 {
             Parser parser = new Parser(lexer);
 
             System.out.println("*****INICIANDO ANALISIS*****");
+            
+            // Lee todo el archivo. Aquí ocurren 3 cosas
+            // Se validan las reglas gramaticales.
+            // Se llenan las tablas de símbolos.
+            // Se construye el árbol CST en memoria.
+            parser.parse();
                    
             if (parser.listaErrores.isEmpty()) {
                 System.out.println("*****SIN ERRORES*****");
@@ -32,9 +38,19 @@ public class Parser1 {
             }
             
             
-            parser.parse();
             parser.imprimirTablas();
             System.out.println("*****ANALISIS FINALIZADO*****");
+            
+            System.out.println("\n***** ARBOL SINTACTICO *****");
+            if (parser.raiz != null) {
+                // Llamamos al método arbol() sobre la raíz guardada en el parser
+                parser.raiz.arbol(); 
+            } else {
+                System.out.println("El árbol está vacío (hubo errores fatales).");
+            }
+
+            System.out.println("\n***** ANALISIS FINALIZADO *****");
+            
 
         } catch (Exception e) {
             e.printStackTrace();

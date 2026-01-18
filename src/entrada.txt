@@ -1,53 +1,11 @@
-world string _s1_ endl |comentario linea###
+world int globalVar endl
+world float PI = 3.1416 endl
 
-є !@#$$%^& multilinea
-  э
+|funcion para calcular area
+gift float calcularArea ¿ int radio? ¡
+    local float resultado endl
+    resultado = PI * radio * radio endl
+    return resultado endl
+!   
 
-gift float _mi_  ¿ int _dif_, char _otra_ ? ¡ 
-	local int _otra_ endl
-	local int miArr[2][2] endl
-	local int miArr[2][2] = ¡¡1,2!¡3,4!! endl
-	local string _str_="Hola  endl ~&|! endl & ?  mundo" endl 
-	for   ¿ int i = 0 endl  i < 10 endl ++i ?
-	 ¡ 
-		loop
-		  	_var_2 = _var_2 - 1 endl 
-			_var_ = _var_ - 1 endl  
-		exit when ¿ _var2_>12.2 @ Σ ¿12> ¿ 34+35 ??  ?  endl 
-		end loop endl 
 
-		decide   of
-		¿ false @ 3>4 ~ 4*5 > 5 + g % 4 + func ¿1,2? ?  ->
-		 ¡ 
-			show ¿ "entra al if" ?  endl 
-			!
-		end decide endl 
-		decide   of 
-		true ->  
-		 ¡ 
-			show ¿ _var_ ?  endl 
-		 ! 
-		else ->
-		 ¡ 
-			decide   of 
-				_otra_ == 1 -> ¡ 
-					show ¿ "!|" ?  endl  !
-				_otra_ == 2 -> ¡
-					_otra_ = 10 endl 
-					break endl  !
-				else -> ¡ 
-					_otra_ = -10.5 * -1.9 endl  !
-			end  decide   endl 
-		 !
-		 end  decide   endl 
-	 ! 
-	return 1 endl  
-  ! 
-
-coal  navidad  ¿  ?   ¡ 
-    local int edad endl
-    local int xa = 5 endl
-    get edad endl
-    show xa endl
-    return -5.6 endl 
-  ! 
