@@ -1,11 +1,23 @@
-world int globalVar endl
-world float PI = 3.1416 endl
+coal navidad ¿ ? ¡
+    show "Prueba DECIDE" endl
+    
+    local int puntaje endl
+    get puntaje endl
 
-|funcion para calcular area
-gift float calcularArea ¿ int radio? ¡
-    local float resultado endl
-    resultado = PI * radio * radio endl
-    return resultado endl
-!   
+    show "Puntaje: " endl
+    show puntaje endl
 
+    decide of
+        puntaje >= 70 -> ¡
+            show "Resultado: Excelente Aprobado" endl
+        !
+        puntaje < 70 -> ¡
+            show "Resultado: Reprobado" endl
+        !
+        else -> ¡
+            show "Caso imposible (default)" endl
+        !
+    end decide endl
 
+    show "Fin" endl
+!

@@ -13,43 +13,48 @@ import java_cup.runtime.*;
 public class Parser1 {
     public static void main(String[] args) {
         try {
-            Reader reader = new FileReader("src/entrada.txt");
+            // Configuración de archivos
+            String rutaEntrada = "src/entrada.txt";
+            String rutaSalida = "src/salida.asm"; // Archivo destino MIPS
+
+            System.out.println("Abriendo archivo: " + rutaEntrada);
+            Reader reader = new FileReader(rutaEntrada);
             Lexer lexer = new Lexer(reader);
-            Parser parser = new Parser(lexer);
-
-            System.out.println("*****INICIANDO ANALISIS*****");
             
-            // Lee todo el archivo. Aquí ocurren 3 cosas
-            // Se validan las reglas gramaticales.
-            // Se llenan las tablas de símbolos.
-            // Se construye el árbol CST en memoria.
+            // Instanciar el Generador de Código
+            // Este objeto se encargará de escribir las instrucciones .asm
+            Generador generador = new Generador(rutaSalida);
+
+            // Iniciar el Parser pasándole el Lexer Y el Generador
+            Parser parser = new Parser(lexer, generador);
+
+            System.out.println("***** INICIANDO ANALISIS Y GENERACION *****");
+            
+            // Ejecutar análisis
+            // Al ejecutar parse(), se validan tipos Y se escribe en el archivo .asm simultáneamente
             parser.parse();
-                   
+                    
+            // Imprimir Errores (Sintácticos y Semánticos)
             if (parser.listaErrores.isEmpty()) {
-                System.out.println("*****SIN ERRORES*****");
+                System.out.println(">> Codigo MIPS generado exitosamente en: " + rutaSalida);
             } else {
-                System.out.println("\n*****REPORTE DE ERRORES*****");
-                for (Errores err : parser.listaErrores) {
-                    System.out.println("Tipo: " + err.tipo + 
-                                       " | Mensaje: " + err.mensaje + 
-                                       " | Línea: " + err.linea + 
-                                       " | Columna: " + err.columna);
+                System.out.println("\n***** REPORTE DE ERRORES *****");
+                for (Object obj : parser.listaErrores) {
+                    if (obj instanceof Errores) {
+                        Errores err = (Errores) obj;
+                        System.out.println("Tipo: " + err.tipo + 
+                                           " | Linea: " + err.linea + 
+                                           " | Mensaje: " + err.mensaje);
+                    }
                 }
+                System.out.println("\n(i) El archivo " + rutaSalida + " se generó, pero puede contener errores lógicos debido a los fallos detectados.");
             }
             
-            
+            // Imprimir Tablas de Símbolos
+            System.out.println("\n***** ESTADO DE LAS TABLAS DE SIMBOLOS *****");
             parser.imprimirTablas();
-            System.out.println("*****ANALISIS FINALIZADO*****");
             
-            System.out.println("\n***** ARBOL SINTACTICO *****");
-            if (parser.raiz != null) {
-                // Llamamos al método arbol() sobre la raíz guardada en el parser
-                parser.raiz.arbol(); 
-            } else {
-                System.out.println("El árbol está vacío (hubo errores fatales).");
-            }
-
-            System.out.println("\n***** ANALISIS FINALIZADO *****");
+            System.out.println("\n***** PROCESO FINALIZADO *****");
             
 
         } catch (Exception e) {

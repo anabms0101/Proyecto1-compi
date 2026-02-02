@@ -1,7 +1,7 @@
 import java_cup.runtime.*;
 import java.util.ArrayList;
 import java.util.List;
-
+import java.util.Stack;
 
 /* ----------------------------------------------------------------------------
    PARSER CODE
@@ -22,16 +22,34 @@ parser code {:
     // Punteros para el manejo de Ámbitos (Scopes)
     public TablaSimbolos tablaGlobal = new TablaSimbolos("Global", null);
     public TablaSimbolos tablaActual = tablaGlobal;
-    {
-    reporteTablas.add(tablaGlobal);
+
+    // Controla el tipo que debe retornar la función actual. "void" si estamos fuera de una función.
+    public String tipoRetornoFuncion = "void";
+    public java.util.HashMap<String, String> misStrings = new java.util.HashMap<>();
+    public int strCount = 0;
+
+
+    // VARIABLES PARA GENERACIÓN DE CÓDIGO
+    public Generador gen;      
+    public int offsetActual = 0; // Control de memoria local ($fp)
+    public int offsetParam = 0;
+    public Stack<String> pilaEtiquetas = new Stack<>();
+
+
+    public Parser(Lexer lex, Generador g) {
+        super(lex);
+        this.gen = g;
+        reporteTablas.add(tablaGlobal);
     }
+
+
     // Método para iniciar (llamar desde el Main antes de parse())
     public void init() {
         reporteTablas.add(tablaGlobal);
     }
 
-    // --- MANEJO DE ÁMBITOS (SCOPES) ---
-    // Simula una pila de tablas. Cuando entramos a { bajamos, cuando salimos } subimos.
+    // MANEJO DE ÁMBITOS (SCOPES)
+    // Simula una pila de tablas.
     public void entrarAmbito(String nombre) {
         TablaSimbolos nuevaTabla = new TablaSimbolos(nombre, tablaActual);
         tablaActual = nuevaTabla; // El puntero baja
@@ -44,6 +62,7 @@ parser code {:
             tablaActual = tablaActual.padre; // El puntero sube
         }
     }
+
     
     public void imprimirTablas() {
         for (TablaSimbolos t : reporteTablas) {
@@ -51,7 +70,182 @@ parser code {:
         }
     }
 
-    // --- MANEJO DE ERRORES (MODO PÁNICO) ---
+    public String registrarString(String val) {
+        String label = "str_" + strCount++;
+        misStrings.put(label, val);
+        return label;
+    }
+
+
+
+    // MÉTODOS DE VALIDACIÓN DE TIPOS
+    // Obtener tipo de variable existente
+    public String getTipoVar(String id, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        if (s == null) {
+            semantic_error("La variable '" + id + "' no ha sido declarada.", linea, col);
+            return "error";
+        }
+        return s.getTipo();
+    }
+
+
+
+    // Aritmética (+, -, *, /)
+    public String validarAritmetica(String t1, String t2, int linea, int col) {
+        if (t1.equals("error") || t2.equals("error")) return "error";
+        
+        if (t1.equals("int") && t2.equals("int")) return "int";
+        if (t1.equals("float") && t2.equals("float")) return "float";
+        if ((t1.equals("int") && t2.equals("float")) || (t1.equals("float") && t2.equals("int"))) return "float";
+        
+        semantic_error("Operacion aritmetica invalida entre " + t1 + " y " + t2, linea, col);
+        return "error";
+    }
+
+
+
+    // Operaciones Enteras (Modulo, Div Entera)
+    public String validarEnteros(String t1, String t2, String op, int linea, int col) {
+        if (t1.equals("error") || t2.equals("error")) return "error";
+        if (!t1.equals("int") || !t2.equals("int")) {
+            semantic_error("El operador '" + op + "' solo permite enteros.", linea, col);
+            return "error";
+        }
+        return "int";
+    }
+
+
+
+    // Operaciones Unarias (++ y --)
+    public String validarUnarioVar(String id, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        if (s == null) { semantic_error("Variable '" + id + "' no existe.", linea, col); return "error"; }
+        
+        String t = s.getTipo();
+        if (t.equals("int") || t.equals("float")) return t;
+        
+        semantic_error("Operacion unaria solo valida para numeros. Variable es " + t, linea, col);
+        return "error";
+    }
+
+
+
+    // Relacionales (>, <, ==) 
+    public String validarRelacional(String t1, String t2, int linea, int col) {
+        if (t1.equals("error") || t2.equals("error")) return "boolean";
+        if ((t1.equals("int") || t1.equals("float")) && (t2.equals("int") || t2.equals("float"))) return "boolean";
+        if (t1.equals("boolean") && t2.equals("boolean")) return "boolean";
+        if (t1.equals("string") && t2.equals("string")) return "boolean";
+        
+        semantic_error("Comparacion invalida entre " + t1 + " y " + t2, linea, col);
+        return "boolean";
+    }
+
+
+
+    // Lógicos (@, ~, Σ)
+    public String validarLogica(String t1, String t2, int linea, int col) {
+        if (!t1.equals("boolean") || !t2.equals("boolean")) {
+            semantic_error("Operaciones logicas requieren booleanos.", linea, col);
+        }
+        return "boolean";
+    }
+
+
+    // Asignación
+    public void validarAsignacion(String id, String tipoExp, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        if (s == null) {
+            semantic_error("Variable '" + id + "' no existe.", linea, col);
+            return;
+        }
+        if (s.clase.equals("Funcion") || s.clase.equals("Arreglo")) {
+             semantic_error("No se puede asignar valor a '" + id + "' (es Funcion o Arreglo).", linea, col);
+             return;
+        }
+        if (!s.getTipo().equals(tipoExp)) {
+            if (s.getTipo().equals("float") && tipoExp.equals("int")) return; 
+            semantic_error("Tipo incompatible. Variable '" + id + "' es " + s.getTipo() + ", se asigna " + tipoExp, linea, col);
+        }
+    }
+
+
+
+    // Llamadas a Funciones
+    public String validarLlamada(String id, ArrayList<String> argsTipos, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        if (s == null) { semantic_error("Funcion '" + id + "' no existe.", linea, col); return "error"; }
+        if (!s.clase.equals("Funcion")) { semantic_error("'" + id + "' no es una funcion.", linea, col); return "error"; }
+        
+        if (s.listaParametros.size() != argsTipos.size()) {
+            semantic_error("La funcion '" + id + "' espera " + s.listaParametros.size() + " parametros, recibio " + argsTipos.size(), linea, col);
+            return s.getTipo();
+        }
+        
+        for(int i=0; i<argsTipos.size(); i++) {
+            String esperado = s.listaParametros.get(i);
+            String recibido = argsTipos.get(i);
+            if(!esperado.equals(recibido) && !(esperado.equals("float") && recibido.equals("int"))) {
+                semantic_error("Parametro " + (i+1) + " en '" + id + "' incorrecto. Esperado: " + esperado + ", Recibido: " + recibido, linea, col);
+            }
+        }
+        return s.getTipo();
+    }
+
+
+
+    // Arreglos (Acceso)
+    public String validarAccesoArreglo(String id, String t1, String t2, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        if(s == null) { semantic_error("Arreglo '"+id+"' no existe.", linea, col); return "error"; }
+        if(!s.esArreglo) { semantic_error("'"+id+"' no es un arreglo.", linea, col); return "error"; }
+        
+        if(!t1.equals("int") || !t2.equals("int")) {
+            semantic_error("Indices de arreglo deben ser enteros.", linea, col);
+        }
+        return s.getTipo().replace("[][]", "");
+    }
+
+
+    public void validarAsignacionArreglo(String id, String tIdx1, String tIdx2, String tValor, int linea, int col) {
+        Simbolo s = tablaActual.buscar(id);
+        
+        if (s == null) {
+            semantic_error("El arreglo '" + id + "' no existe.", linea, col);
+            return;
+        }
+        
+        if (!s.esArreglo) {
+            semantic_error("La variable '" + id + "' no es un arreglo. No use [][].", linea, col);
+            return;
+        }
+        
+        if (!tIdx1.equals("int") || !tIdx2.equals("int")) {
+            semantic_error("Los indices para asignar en '" + id + "' deben ser enteros.", linea, col);
+        }
+        
+        String tipoBase = s.getTipo().replace("[][]", "");
+        
+        if (!tipoBase.equals(tValor)) {
+            // Permitir float = int
+            if (tipoBase.equals("float") && tValor.equals("int")) return;
+            
+            semantic_error("Error de tipos. El arreglo '" + id + "' es " + tipoBase + 
+                           " pero se le asigna " + tValor, linea, col);
+        }
+    }
+
+
+    // REPORTAR ERRORES SEMÁNTICOS
+    public void semantic_error(String msg, int linea, int col) {
+        System.out.println("(!) Error Semantico (Linea " + linea + "): " + msg);
+        listaErrores.add(new Errores("Semantico", msg, linea, col));
+    }
+
+
+
+    // MANEJO DE ERRORES (MODO PÁNICO)
     // Este método se dispara cuando el parser encuentra un error pero logra
     // recuperarse usando la regla 'error'. No detiene la compilación.
     public void syntax_error(Symbol s) {
@@ -75,6 +269,39 @@ parser code {:
 
             listaErrores.add(new Errores("Sintactico Fatal", "No se pudo recuperar del error", linea, columna));
         }
+
+
+    // Genera código para operaciones binarias sacando de la pila
+    public void generarOperacion(String op) {
+        gen.pop2(); // $t1 (derecha)
+        gen.pop();  // $t0 (izquierda)
+        
+        switch(op) {
+            case "+": gen.print("add $t0, $t0, $t1"); break;
+            case "-": gen.print("sub $t0, $t0, $t1"); break;
+            case "*": gen.print("mul $t0, $t0, $t1"); break;
+            case "/": gen.print("div $t0, $t1"); gen.print("mflo $t0"); break;
+            case "%": gen.print("div $t0, $t1"); gen.print("mfhi $t0"); break;
+
+            // Relacionales
+            case "==": gen.print("seq $t0, $t0, $t1"); break;
+            case "!=": gen.print("sne $t0, $t0, $t1"); break;
+            case ">":  gen.print("sgt $t0, $t0, $t1"); break;
+            case "<":  gen.print("slt $t0, $t0, $t1"); break;
+            case ">=": gen.print("sge $t0, $t0, $t1"); break;
+            case "<=": gen.print("sle $t0, $t0, $t1"); break;
+
+            // Lógicos
+            case "&&": gen.print("and $t0, $t0, $t1"); break;
+            case "||": gen.print("or $t0, $t0, $t1"); break;
+        }
+        gen.push(); // Resultado a la pila
+    }
+
+
+    public Simbolo getSimbolo(String id) {
+        return tablaActual.buscar(id);
+}
 
 :}
 
@@ -121,35 +348,35 @@ terminal CHAR_LITERAL;
 terminal STRING_LITERAL;
 
 
-/* 
-   Casi todos los no terminales retornan un 'NodoCST'. Esto significa que cada regla
-   gramatical, al ejecutarse, construye un pedacito del árbol y se lo pasa a su padre.
-*/
+
 
 /* NO TERMINALES */
-non terminal NodoCST program, bloque;
-non terminal NodoCST lista_declaracion, declaracion;
-non terminal NodoCST declaracion_global;
-non terminal NodoCST declaracion_funcion;
-non terminal NodoCST declaracion_main;
-non terminal NodoCST declaracion_local;
-non terminal NodoCST asignacion_stmt;
-non terminal NodoCST expresion_stmt;
-non terminal NodoCST control_stmt;
-non terminal NodoCST decide_stmt;
-non terminal NodoCST loop_stmt;
-non terminal NodoCST for_stmt;
-non terminal NodoCST decide_cases;
-non terminal NodoCST decide_case;
-non terminal NodoCST array_dim, array_init, array_valores;
-non terminal NodoCST declaracion_for;
+non terminal Object program, bloque;
+non terminal Object lista_declaracion, declaracion;
+non terminal Object declaracion_global;
+non terminal Object declaracion_funcion;
+non terminal Object declaracion_main;
+non terminal Object declaracion_local;
+non terminal Object asignacion_stmt;
+non terminal Object expresion_stmt;
+non terminal Object control_stmt;
+non terminal Object decide_stmt;
+non terminal Object loop_stmt;
+non terminal Object for_stmt;
+non terminal Object decide_cases;
+non terminal Object decide_case;
+non terminal Object array_init, array_valores;
+non terminal int[] array_dim;
+non terminal Object declaracion_for;
+non terminal Object stmt_lista, stmt;
 
-non terminal NodoCST stmt_lista, stmt;
-non terminal NodoCST expresion, expresion_logica, expresion_rel, expresion_arit;
-non terminal NodoCST termino, factor;
-non terminal NodoCST param_lista, param_lista_opt;
-non terminal NodoCST arg_lista, arg_lista_opt;
-non terminal NodoCST array_rows, array_row;
+non terminal String expresion, expresion_logica, expresion_rel, expresion_arit;
+non terminal String termino, factor;
+
+non terminal Object param_lista, param_lista_opt;
+
+non terminal ArrayList<String> arg_lista, arg_lista_opt;
+non terminal Object array_rows, array_row;
 
 non terminal String tipo;
 
@@ -174,32 +401,26 @@ start with program;
 
 /* Produccion inicial */
 // Conectar la lista de declaraciones con la raíz del parser.
-program ::= lista_declaracion:l 
+program ::= 
+    {: parser.gen.iniciarCodigo(); :} 
+    lista_declaracion 
     {: 
-        NodoCST n = new NodoCST("PROGRAMA");
-        n.addHijo(l);
-        parser.raiz = n; // Guardamos la raiz
-        RESULT = n; 
+       // Imprimir la sección .data al final
+       parser.gen.print(".data");
+       
+       for (java.util.Map.Entry<String, String> entry : parser.misStrings.entrySet()) {
+           parser.gen.print(entry.getKey() + ": .asciiz \"" + entry.getValue() + "\"");
+       }
+       
+       parser.gen.cerrar(); 
+       System.out.println("Proceso Finalizado"); 
     :};
 
 // Recursividad para admitir múltiples declaraciones
-lista_declaracion ::= lista_declaracion:l declaracion:d 
-    {: 
-        NodoCST n = new NodoCST("LISTA_DECL");
-        n.addHijo(l); n.addHijo(d);
-        RESULT = n; 
-    :}
-    | declaracion:d
-    {: 
-        NodoCST n = new NodoCST("LISTA_DECL");
-        n.addHijo(d);
-        RESULT = n; 
-    :};
+lista_declaracion ::= lista_declaracion declaracion | declaracion;
 
 
-declaracion ::= declaracion_global:d {: RESULT = d; :} 
-              | declaracion_funcion:d {: RESULT = d; :} 
-              | declaracion_main:d {: RESULT = d; :};
+declaracion ::= declaracion_global | declaracion_funcion | declaracion_main;
 
 
 
@@ -211,28 +432,23 @@ declaracion ::= declaracion_global:d {: RESULT = d; :}
 declaracion_global ::= 
       WORLD tipo:t IDENTIFIER:id ENDL 
       {: 
-
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
-          p.tablaGlobal.insertar(s);
-          System.out.println("Variable global detectada: " + id);
-          
-          NodoCST n = new NodoCST("DECL_GLOBAL");
-          n.addHijo("world"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("endl");
-          RESULT = n;
+         if(parser.tablaGlobal.buscar(id) != null) parser.semantic_error("Global '" + id + "' ya existe.", idleft, idright);
+         else {
+             Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
+             parser.tablaGlobal.insertar(s);
+             parser.gen.declararGlobal(id, t); // MIPS .data
+         }
       :}
     | WORLD tipo:t IDENTIFIER:id IQ expresion:e ENDL 
       {: 
-          // TU LOGICA EXISTENTE
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
-          p.tablaGlobal.insertar(s);
-          System.out.println("Variable global detectada (con valor): " + id);
-          
-          // NUEVA LOGICA DE ARBOL
-          NodoCST n = new NodoCST("DECL_GLOBAL_INIT");
-          n.addHijo("world"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl");
-          RESULT = n;
+         if(!t.equals(e) && !(t.equals("float") && e.equals("int"))) parser.semantic_error("Global '" + id + "': Tipo incorrecto.", idleft, idright);
+         
+         if(parser.tablaGlobal.buscar(id) != null) parser.semantic_error("Global '" + id + "' ya existe.", idleft, idright);
+         else {
+             Simbolo s = new Simbolo(id, t, "Variable Global", "Global", idleft, idright);
+             parser.tablaGlobal.insertar(s);
+             parser.gen.declararGlobal(id, t);         
+         }
       :};
 
 
@@ -240,22 +456,20 @@ declaracion_global ::=
 declaracion_main ::= 
     COAL NAVIDAD:id 
     {: 
-        // TU LOGICA EXISTENTE
-        Parser p = (Parser)parser;
-        Simbolo s = new Simbolo("navidad", "coal", "Main", p.tablaActual.nombreAmbito, idleft, idright);
-        p.tablaActual.insertar(s);
-        p.entrarAmbito("Main_Navidad");
+       parser.tablaActual.insertar(new Simbolo("navidad", "coal", "Main", parser.tablaActual.nombreAmbito, idleft, idright));
+       parser.entrarAmbito("Main_Navidad");
+       
+       parser.gen.iniciarTexto();
+       parser.gen.label("main");
+       parser.gen.print("move $fp, $sp");
     :} 
-    PARENI PAREND bloque:b
-    {: 
-        // TU LOGICA EXISTENTE
-        ((Parser)parser).salirAmbito(); 
-        
-        // NUEVA LOGICA DE ARBOL
-        NodoCST n = new NodoCST("MAIN");
-        n.addHijo("coal"); n.addHijo("navidad"); n.addHijo("¿"); n.addHijo("?"); n.addHijo(b);
-        RESULT = n;
-    :};
+    PARENI PAREND bloque:b 
+    {: parser.salirAmbito(); 
+
+    parser.gen.print("li $v0, 10"); // Código 10 = Exit
+    parser.gen.print("syscall");    // Ejecutar salida
+
+:};
 
 
 /* 
@@ -266,19 +480,20 @@ declaracion_main ::=
 declaracion_funcion ::= 
     GIFT tipo:t IDENTIFIER:id 
     {: 
-        Parser p = (Parser)parser;
-        Simbolo s = new Simbolo(id, t, "Funcion", p.tablaActual.nombreAmbito, idleft, idright);
-        p.tablaActual.insertar(s);
-        p.entrarAmbito("Funcion_" + id); 
+       Simbolo s = new Simbolo(id, t, "Funcion", parser.tablaActual.nombreAmbito, idleft, idright);
+       parser.tablaActual.insertar(s);
+       parser.tipoRetornoFuncion = t;
+       parser.entrarAmbito("Funcion_" + id);
+       
+       parser.gen.print(".text"); 
+       parser.gen.label("Func_" + id); 
+       parser.offsetActual = 0; 
     :}
-    PARENI param_lista_opt:p PAREND 
-    bloque:b 
+    PARENI param_lista_opt PAREND bloque 
     {: 
-        ((Parser)parser).salirAmbito(); 
-        
-        NodoCST n = new NodoCST("FUNCION");
-        n.addHijo("gift"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("¿"); n.addHijo(p); n.addHijo("?"); n.addHijo(b);
-        RESULT = n;
+       parser.salirAmbito(); 
+       parser.tipoRetornoFuncion = "void"; 
+       parser.gen.print("jr $ra"); 
     :};
 
 
@@ -293,9 +508,6 @@ bloque ::=
     BLOQUE_CER
     {: 
         ((Parser)parser).salirAmbito(); 
-        NodoCST n = new NodoCST("BLOQUE");
-        n.addHijo("¡"); n.addHijo(l); n.addHijo("!");
-        RESULT = n;
     :};
 
 
@@ -303,125 +515,332 @@ bloque ::=
    Definen qué puede ir dentro de un bloque de código.
 */
 
-stmt_lista ::= stmt_lista:l stmt:s {: NodoCST n = new NodoCST("STMT_LIST"); n.addHijo(l); n.addHijo(s); RESULT = n; :}
-             | stmt:s {: NodoCST n = new NodoCST("STMT_LIST"); n.addHijo(s); RESULT = n; :};
+stmt_lista ::= stmt_lista stmt | stmt;
 
 
-stmt ::= declaracion_local:d {: RESULT = d; :}
-       | asignacion_stmt:a   {: RESULT = a; :}
-       | expresion_stmt:e    {: RESULT = e; :}
-       | control_stmt:c      {: RESULT = c; :}
-       | RETURN expresion:e ENDL {: NodoCST n = new NodoCST("RETURN"); n.addHijo("return"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
-       | BREAK ENDL {: NodoCST n = new NodoCST("BREAK"); n.addHijo("break"); n.addHijo("endl"); RESULT = n; :}
-       | SHOW expresion:e ENDL {: NodoCST n = new NodoCST("SHOW"); n.addHijo("show"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
-       | GET IDENTIFIER:id ENDL {: NodoCST n = new NodoCST("GET"); n.addHijo("get"); n.addHijo(id); n.addHijo("endl"); RESULT = n; :}
-       | error ENDL {: NodoCST n = new NodoCST("ERROR_RECUPERADO"); RESULT = n; :};
+stmt ::= declaracion_local 
+       | asignacion_stmt 
+       | expresion_stmt 
+       | control_stmt 
+       | RETURN:r expresion:e ENDL 
+         {: 
+            if(!parser.tipoRetornoFuncion.equals("void")) {
+                if(!parser.tipoRetornoFuncion.equals(e) && !(parser.tipoRetornoFuncion.equals("float") && e.equals("int"))) {
+                    parser.semantic_error("Return invalido.", rleft, rright);
+                }
+            }
+            parser.gen.pop(); 
+            parser.gen.print("move $v0, $t0"); 
+         :}
+       | BREAK ENDL
+       | SHOW expresion:e ENDL 
+         {:
+            if(e.equals("string")) {
+                parser.gen.pop(); // Sacamos la dirección de memoria
+                parser.gen.print("move $a0, $t0"); // Dirección a $a0
+                parser.gen.print("li $v0, 4");     // Syscall 4 = Print String
+                parser.gen.print("syscall");
+            } else {
+                parser.gen.pop();
+                parser.gen.print("move $a0, $t0");
+                parser.gen.print("li $v0, 1");
+                parser.gen.print("syscall");
+            }
+            // Salto de linea
+            parser.gen.print("li $a0, 10");
+            parser.gen.print("li $v0, 11");
+            parser.gen.print("syscall");
+         :}
+        | GET IDENTIFIER:id ENDL 
+         {: 
+            String t = parser.getTipoVar(id, idleft, idright);
+            Simbolo s = parser.getSimbolo(id);
+            
+            // Si la variable existe y no hubo error semántico
+            if (!t.equals("error") && s != null) {
+                
+                if(!t.equals("int") && !t.equals("float")) { 
+                }
+
+                parser.gen.print("li $v0, 5");  
+                parser.gen.print("syscall");    
+                // El valor leído queda guardado en el registro $v0
+                
+                if (s.ambito.equals("Global")) {
+                    // Si es global, se guarda usando su etiqueta
+                    parser.gen.print("sw $v0, " + id);
+                } else {
+                    parser.gen.print("sw $v0, " + s.offset + "($fp)");
+                }
+            }
+         :}
+       | error ENDL;
 
 
-param_lista_opt ::= param_lista:l {: RESULT = l; :} | /* vacío */ {: RESULT = new NodoCST("VACIO"); :};
+param_lista_opt ::= param_lista | /* vacio */;
 
-param_lista ::= param_lista:l COMA tipo:t IDENTIFIER:id
-    {: 
-        Parser p = (Parser)parser;
-        Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
-        p.tablaActual.insertar(s);
-        
-        NodoCST n = new NodoCST("PARAMS"); n.addHijo(l); n.addHijo(","); n.addHijo(new NodoCST(t)); n.addHijo(id); RESULT = n;
+param_lista ::= param_lista COMA tipo:t IDENTIFIER:id
+    {:
+       parser.tablaActual.insertar(new Simbolo(id, t, "Parametro", parser.tablaActual.nombreAmbito, idleft, idright));
+       String funcName = parser.tablaActual.nombreAmbito.replace("Funcion_", "");
+       Simbolo func = parser.tablaActual.padre.buscar(funcName);
+       if(func != null) func.addParametro(t);
     :}
     | tipo:t IDENTIFIER:id
-    {: 
-        Parser p = (Parser)parser;
-        Simbolo s = new Simbolo(id, t, "Parametro", p.tablaActual.nombreAmbito, idleft, idright);
-        p.tablaActual.insertar(s);
-        
-        NodoCST n = new NodoCST("PARAM"); n.addHijo(new NodoCST(t)); n.addHijo(id); RESULT = n;
+    {:
+       parser.tablaActual.insertar(new Simbolo(id, t, "Parametro", parser.tablaActual.nombreAmbito, idleft, idright));
+       String funcName = parser.tablaActual.nombreAmbito.replace("Funcion_", "");
+       Simbolo func = parser.tablaActual.padre.buscar(funcName);
+       if(func != null) func.addParametro(t);
     :};
 
-arg_lista_opt ::= arg_lista:l {: RESULT = l; :} | /* vacío */ {: RESULT = new NodoCST("VACIO"); :};
-arg_lista ::= arg_lista:l COMA expresion:e {: NodoCST n = new NodoCST("ARGS"); n.addHijo(l); n.addHijo(","); n.addHijo(e); RESULT = n; :} 
-            | expresion:e {: RESULT = e; :};
+arg_lista_opt ::= arg_lista:l {: RESULT = l; :} | /* vacio */ {: RESULT = new ArrayList<String>(); :};
+arg_lista ::= arg_lista:l COMA expresion:e {: l.add(e); RESULT = l; :} 
+            | expresion:e {: ArrayList<String> l = new ArrayList<>(); l.add(e); RESULT = l; :};
 
 
 declaracion_local ::= 
       LOCAL tipo:t IDENTIFIER:id ENDL 
       {: 
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
-          p.tablaActual.insertar(s);
-          
-          NodoCST n = new NodoCST("DECL_LOCAL"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("endl"); RESULT = n;
+         if(parser.tablaActual.buscar(id) != null) parser.semantic_error("Local '" + id + "' ya existe.", idleft, idright);
+         else {
+             parser.offsetActual -= 4; // Reservar espacio
+             Simbolo s = new Simbolo(id, t, "Local", parser.tablaActual.nombreAmbito, idleft, idright);
+             s.setOffset(parser.offsetActual);
+             parser.tablaActual.insertar(s);
+             // Inicializar en 0
+             parser.gen.print("sw $zero, " + parser.offsetActual + "($fp)");
+         }
       :}
     | LOCAL tipo:t IDENTIFIER:id IQ expresion:e ENDL
       {: 
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t, "Local", p.tablaActual.nombreAmbito, idleft, idright);
-          p.tablaActual.insertar(s);
-          
-          NodoCST n = new NodoCST("DECL_LOCAL_INIT"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n;
+         if(!t.equals(e) && !(t.equals("float") && e.equals("int"))) parser.semantic_error("Inicializacion invalida.", idleft, idright);
+         
+         if(parser.tablaActual.buscar(id) != null) parser.semantic_error("Local '" + id + "' ya existe.", idleft, idright);
+         else {
+             parser.offsetActual -= 4;
+             Simbolo s = new Simbolo(id, t, "Local", parser.tablaActual.nombreAmbito, idleft, idright);
+             s.setOffset(parser.offsetActual);
+             parser.tablaActual.insertar(s);
+             
+             parser.gen.pop();
+             parser.gen.print("sw $t0, " + s.offset + "($fp)");
+
+         }
       :}
+    // Declaración arreglos
     | LOCAL tipo:t IDENTIFIER:id array_dim:d ENDL
       {:
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
-          p.tablaActual.insertar(s);
-          
-          NodoCST n = new NodoCST("DECL_ARRAY"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo(d); n.addHijo("endl"); RESULT = n;
+         int[] dims = (int[])d;
+         Simbolo s = new Simbolo(id, t, "Arreglo", parser.tablaActual.nombreAmbito, idleft, idright);
+         s.setArreglo2D(dims[0], dims[1]); 
+         parser.tablaActual.insertar(s);
       :}
-    | LOCAL tipo:t IDENTIFIER:id array_dim:d IQ array_init:i ENDL
+    | LOCAL tipo:t IDENTIFIER:id array_dim:d IQ array_init ENDL
       {:
-          Parser p = (Parser)parser;
-          Simbolo s = new Simbolo(id, t + "[][]", "Arreglo 2D", p.tablaActual.nombreAmbito, idleft, idright);
-          p.tablaActual.insertar(s);
-          
-          NodoCST n = new NodoCST("DECL_ARRAY_INIT"); n.addHijo("local"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo(d); n.addHijo("="); n.addHijo(i); n.addHijo("endl"); RESULT = n;
+         int[] dims = (int[])d;
+         Simbolo s = new Simbolo(id, t, "Arreglo", parser.tablaActual.nombreAmbito, idleft, idright);
+         s.setArreglo2D(dims[0], dims[1]); 
+         parser.tablaActual.insertar(s);
       :};
+
+
 
 /*REGLAS AUXILIARES PARA ARREGLOS*/
 array_dim ::= BRACKETI INTEGER_LITERAL:i1 BRACKETD BRACKETI INTEGER_LITERAL:i2 BRACKETD
-    {: NodoCST n = new NodoCST("DIMENSION"); n.addHijo("["); n.addHijo(i1.toString()); n.addHijo("]"); n.addHijo("["); n.addHijo(i2.toString()); n.addHijo("]"); RESULT = n; :};
-
-array_init ::= BLOQUE_ABI array_rows:r BLOQUE_CER {: NodoCST n = new NodoCST("ARRAY_INIT"); n.addHijo("¡"); n.addHijo(r); n.addHijo("!"); RESULT = n; :};
-
-array_rows ::= array_rows:rs array_row:r {: NodoCST n = new NodoCST("FILAS"); n.addHijo(rs); n.addHijo(r); RESULT = n; :}
-             | array_row:r {: RESULT = r; :};
-
-array_row ::= BLOQUE_ABI array_valores:v BLOQUE_CER {: NodoCST n = new NodoCST("FILA"); n.addHijo("¡"); n.addHijo(v); n.addHijo("!"); RESULT = n; :};
-
-array_valores ::= expresion:e {: RESULT = e; :} 
-                | array_valores:v COMA expresion:e {: NodoCST n = new NodoCST("VALORES"); n.addHijo(v); n.addHijo(","); n.addHijo(e); RESULT = n; :};
-
-
-asignacion_stmt ::= IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("ASIGNACION"); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
-expresion_stmt ::= expresion:e ENDL {: NodoCST n = new NodoCST("EXP_STMT"); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
-control_stmt ::= decide_stmt:d {: RESULT = d; :} | loop_stmt:l {: RESULT = l; :} | for_stmt:f {: RESULT = f; :};
-
-
-
-
-decide_stmt ::= DECIDE OF decide_cases:c END DECIDE ENDL {: NodoCST n = new NodoCST("DECIDE"); n.addHijo("decide of"); n.addHijo(c); n.addHijo("end decide endl"); RESULT = n; :};
-decide_cases ::= decide_cases:cs decide_case:c {: NodoCST n = new NodoCST("CASES"); n.addHijo(cs); n.addHijo(c); RESULT = n; :} | decide_case:c {: RESULT = c; :};
-decide_case ::= expresion:e ARROW bloque:b {: NodoCST n = new NodoCST("CASE"); n.addHijo(e); n.addHijo("->"); n.addHijo(b); RESULT = n; :}
-              | ELSE ARROW bloque:b {: NodoCST n = new NodoCST("CASE_ELSE"); n.addHijo("else"); n.addHijo("->"); n.addHijo(b); RESULT = n; :};
-
-
-/* --- Loops y Control --- */
-loop_stmt ::= LOOP {: ((Parser)parser).entrarAmbito("Loop"); :} stmt_lista:l EXIT WHEN expresion:e ENDL END LOOP ENDL
     {: 
-       ((Parser)parser).salirAmbito(); 
-       NodoCST n = new NodoCST("LOOP"); n.addHijo("loop"); n.addHijo(l); n.addHijo("exit when"); n.addHijo(e); n.addHijo("end loop"); RESULT = n; 
+       int[] dims = {i1, i2};
+       if(i1 <= 0 || i2 <= 0) parser.semantic_error("Dimensiones deben ser > 0", i1left, i1right);
+       RESULT = dims; 
+    :};
+
+array_init ::= BLOQUE_ABI array_rows BLOQUE_CER;
+array_rows ::= array_rows array_row | array_row;
+array_row ::= BLOQUE_ABI array_valores BLOQUE_CER;
+array_valores ::= expresion | array_valores COMA expresion;
+
+
+asignacion_stmt ::= 
+      IDENTIFIER:id IQ expresion:e ENDL 
+      {: 
+         parser.validarAsignacion(id, e, idleft, idright); 
+         Simbolo s = parser.getSimbolo(id);
+         if(s != null) {
+             parser.gen.pop(); // Valor en $t0
+             if(s.ambito.equals("Global")) parser.gen.print("sw $t0, " + id);
+             else parser.gen.print("sw $t0, " + s.offset + "($fp)");
+         }
+      :}
+    | IDENTIFIER:id BRACKETI expresion:i1 BRACKETD BRACKETI expresion:i2 BRACKETD IQ expresion:val ENDL
+      {: 
+         parser.validarAsignacionArreglo(id, i1, i2, val, idleft, idright); 
+      :};
+
+expresion_stmt ::= expresion ENDL;
+control_stmt ::= decide_stmt | loop_stmt | for_stmt;
+
+
+
+
+decide_stmt ::= 
+    DECIDE OF 
+    {: 
+        String lExit = parser.gen.nuevaEtiqueta();
+        parser.pilaEtiquetas.push(lExit); 
+    :}
+    decide_cases 
+    END DECIDE ENDL
+    {: 
+        String lExit = parser.pilaEtiquetas.pop();
+        parser.gen.label(lExit);
     :};
 
 
-for_stmt ::= FOR PARENI {: ((Parser)parser).entrarAmbito("For_Header"); :} declaracion_for:d expresion:e1 ENDL expresion:e2 PAREND bloque:b
+decide_cases ::= 
+      decide_cases decide_case 
+    | decide_case;
+
+decide_case ::= 
+    expresion:e ARROW 
     {: 
-       ((Parser)parser).salirAmbito(); 
-       NodoCST n = new NodoCST("FOR"); n.addHijo("for"); n.addHijo("¿"); n.addHijo(d); n.addHijo(e1); n.addHijo("endl"); n.addHijo(e2); n.addHijo("?"); n.addHijo(b); RESULT = n; 
+       if(!e.equals("boolean")) parser.semantic_error("Condicion bool requerida.", eleft, eright);
+       
+       parser.gen.pop(); // Sacar valor booleano ($t0)
+       
+       String lFalse = parser.gen.nuevaEtiqueta();
+       
+       parser.gen.print("beqz $t0, " + lFalse); // Si es falso, salta al siguiente caso
+       
+       parser.pilaEtiquetas.push(lFalse); // Guardamos lFalse para imprimirla al final del bloque
+    :}
+    bloque 
+    {:
+       String lFalse = parser.pilaEtiquetas.pop(); // Recuperamos lFalse local
+       String lExit = parser.pilaEtiquetas.peek(); 
+       
+       parser.gen.print("b " + lExit); // Al terminar el bloque, ir a la salida final
+       parser.gen.label(lFalse);       // Aquí empieza el siguiente caso (o el fin si no hay más)
+    :}
+    | ELSE ARROW bloque 
+    {:
     :};
 
 
+/* Loops y Control */
+loop_stmt ::= 
+    LOOP 
+    {: 
+       parser.entrarAmbito("Loop"); 
+       String lInicio = parser.gen.nuevaEtiqueta();
+       parser.gen.label(lInicio);
+       parser.pilaEtiquetas.push(lInicio);
+    :} 
+    stmt_lista EXIT WHEN expresion:e ENDL END LOOP ENDL
+    {: 
+       parser.salirAmbito(); 
+       if(!e.equals("boolean")) parser.semantic_error("Condicion bool requerida.", eleft, eright);
+       
+       parser.gen.pop(); // $t0
+       String lInicio = parser.pilaEtiquetas.pop();
+       // Si condicion es falsa (0), repetimos el loop (beqz salta a inicio)
+       // Si es verdadera (1), salimos (no salta)
+       parser.gen.print("beqz $t0, " + lInicio);
+    :};
 
-declaracion_for ::= tipo:t IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("DEC_FOR"); n.addHijo(new NodoCST(t)); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :}
-                  | IDENTIFIER:id IQ expresion:e ENDL {: NodoCST n = new NodoCST("ASIG_FOR"); n.addHijo(id); n.addHijo("="); n.addHijo(e); n.addHijo("endl"); RESULT = n; :};
+
+for_stmt ::= 
+    FOR PARENI 
+    {: 
+        parser.entrarAmbito("For"); 
+        
+        // Generamos las etiquetas pero NO imprimimos lCond todavía
+        String lCond = parser.gen.nuevaEtiqueta();
+        String lInc  = parser.gen.nuevaEtiqueta();
+        String lBody = parser.gen.nuevaEtiqueta();
+        String lExit = parser.gen.nuevaEtiqueta();
+        
+        // Guardamos etiquetas en la pila
+        parser.pilaEtiquetas.push(lExit);
+        parser.pilaEtiquetas.push(lBody);
+        parser.pilaEtiquetas.push(lInc);
+        parser.pilaEtiquetas.push(lCond);
+    :} 
+    declaracion_for  
+    {:
+        String lCond = parser.pilaEtiquetas.peek();
+        parser.gen.label(lCond); 
+    :}
+    expresion:e1 ENDL 
+    {:
+        if(!e1.equals("boolean")) parser.semantic_error("Condicion For debe ser booleana.", e1left, e1right);
+        
+        String lCond = parser.pilaEtiquetas.pop(); 
+        String lInc  = parser.pilaEtiquetas.pop();
+        String lBody = parser.pilaEtiquetas.pop();
+        String lExit = parser.pilaEtiquetas.peek(); 
+        
+        parser.gen.pop(); // Sacar resultado bool
+        parser.gen.print("beqz $t0, " + lExit); // Si falso, salir
+        parser.gen.print("b " + lBody);         // Si verdadero, ir al cuerpo
+        
+        parser.gen.label(lInc); 
+        
+        parser.pilaEtiquetas.push(lBody);
+        parser.pilaEtiquetas.push(lInc);
+        parser.pilaEtiquetas.push(lCond);
+    :}
+    expresion:e2 PAREND 
+    {:
+        parser.gen.pop(); 
+        
+        String lCond = parser.pilaEtiquetas.peek(); 
+        parser.gen.print("b " + lCond); // Volver a evaluar condicion
+
+        String lCond_ = parser.pilaEtiquetas.pop();
+        String lInc_  = parser.pilaEtiquetas.pop();
+        String lBody  = parser.pilaEtiquetas.pop();
+        
+        parser.gen.label(lBody);
+        
+        parser.pilaEtiquetas.push(lInc_); 
+    :}
+    bloque
+    {: 
+        parser.salirAmbito(); 
+        
+        String lInc = parser.pilaEtiquetas.pop();
+        String lExit = parser.pilaEtiquetas.pop();
+        
+        parser.gen.print("b " + lInc); // Al terminar bloque, ir a incremento
+        
+        parser.gen.label(lExit);
+    :};
+
+
+declaracion_for ::= 
+      tipo:t IDENTIFIER:id IQ expresion:e ENDL 
+      {: 
+         parser.tablaActual.insertar(new Simbolo(id, t, "Local For", parser.tablaActual.nombreAmbito, idleft, idright)); 
+         if(!t.equals(e)) parser.semantic_error("Error tipos en init For", idleft, idright);
+         
+         parser.offsetActual -= 4;
+         Simbolo s = parser.tablaActual.buscar(id);
+         s.setOffset(parser.offsetActual);
+         
+         parser.gen.pop(); // Sacar el valor de la expresion
+         parser.gen.print("sw $t0, " + s.offset + "($fp)"); // Guardarlo en memoria
+      :}
+    | IDENTIFIER:id IQ expresion:e ENDL 
+      {: 
+         parser.validarAsignacion(id, e, idleft, idright); 
+         Simbolo s = parser.getSimbolo(id);
+         if(s != null) {
+             parser.gen.pop();
+             if(s.ambito.equals("Global")) parser.gen.print("sw $t0, " + id);
+             else parser.gen.print("sw $t0, " + s.offset + "($fp)");
+         }
+      :};
+
 
 tipo ::= INT      {: RESULT = "int"; :}
        | FLOAT    {: RESULT = "float"; :}
@@ -430,41 +849,72 @@ tipo ::= INT      {: RESULT = "int"; :}
        | STRING   {: RESULT = "string"; :};
 
 
-expresion ::= expresion_logica:e {: RESULT = e; :};
+expresion ::= expresion_logica:t {: RESULT = t; :};
 
-expresion_logica ::= expresion_logica:e1 AND expresion_logica:e2 {: NodoCST n = new NodoCST("AND"); n.addHijo(e1); n.addHijo("@"); n.addHijo(e2); RESULT = n; :}
-                   | expresion_logica:e1 OR expresion_logica:e2 {: NodoCST n = new NodoCST("OR"); n.addHijo(e1); n.addHijo("~"); n.addHijo(e2); RESULT = n; :}
-                   | NOT expresion_logica:e {: NodoCST n = new NodoCST("NOT"); n.addHijo("Σ"); n.addHijo(e); RESULT = n; :}
-                   | expresion_rel:e {: RESULT = e; :};
-
-expresion_rel ::= expresion_arit:e1 IQIQ expresion_arit:e2 {: NodoCST n = new NodoCST("EQ"); n.addHijo(e1); n.addHijo("=="); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e1 DIFQ expresion_arit:e2 {: NodoCST n = new NodoCST("NEQ"); n.addHijo(e1); n.addHijo("!="); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e1 MAQ expresion_arit:e2 {: NodoCST n = new NodoCST("GT"); n.addHijo(e1); n.addHijo(">"); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e1 MEQ expresion_arit:e2 {: NodoCST n = new NodoCST("LT"); n.addHijo(e1); n.addHijo("<"); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e1 MAIQ expresion_arit:e2 {: NodoCST n = new NodoCST("GTE"); n.addHijo(e1); n.addHijo(">="); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e1 MEIQ expresion_arit:e2 {: NodoCST n = new NodoCST("LTE"); n.addHijo(e1); n.addHijo("<="); n.addHijo(e2); RESULT = n; :}
-                | expresion_arit:e {: RESULT = e; :};
-
-expresion_arit ::= expresion_arit:e1 PLUS termino:e2 {: NodoCST n = new NodoCST("SUMA"); n.addHijo(e1); n.addHijo("+"); n.addHijo(e2); RESULT = n; :}
-                 | expresion_arit:e1 MINUS termino:e2 {: NodoCST n = new NodoCST("RESTA"); n.addHijo(e1); n.addHijo("-"); n.addHijo(e2); RESULT = n; :}
-                 | termino:t {: RESULT = t; :};
+expresion_logica ::= 
+      expresion_logica:t1 AND:op expresion_logica:t2 {: parser.validarLogica(t1,t2,opleft,opright); parser.generarOperacion("&&"); RESULT="boolean"; :}
+    | expresion_logica:t1 OR:op expresion_logica:t2  {: parser.validarLogica(t1,t2,opleft,opright); parser.generarOperacion("||"); RESULT="boolean"; :}
+    | NOT:op expresion_logica:t {: if(!t.equals("boolean")) parser.semantic_error("Not espera boolean", opleft, opright); parser.gen.pop(); parser.gen.print("not $t0, $t0"); parser.gen.push(); RESULT = "boolean"; :}
+    | expresion_rel:t {: RESULT = t; :};
 
 
-termino ::= termino:t TIMES factor:f {: NodoCST n = new NodoCST("MULT"); n.addHijo(t); n.addHijo("*"); n.addHijo(f); RESULT = n; :}
-          | termino:t DIV factor:f {: NodoCST n = new NodoCST("DIV"); n.addHijo(t); n.addHijo("/"); n.addHijo(f); RESULT = n; :}
-          | termino:t DIVINT factor:f {: NodoCST n = new NodoCST("DIVINT"); n.addHijo(t); n.addHijo("//"); n.addHijo(f); RESULT = n; :}
-          | termino:t MOD factor:f {: NodoCST n = new NodoCST("MOD"); n.addHijo(t); n.addHijo("%"); n.addHijo(f); RESULT = n; :}
-          | factor:f {: RESULT = f; :};
+expresion_rel ::= 
+      expresion_arit:t1 IQIQ:op expresion_arit:t2 {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion("=="); RESULT="boolean"; :}
+    | expresion_arit:t1 DIFQ:op expresion_arit:t2 {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion("!="); RESULT="boolean"; :}
+    | expresion_arit:t1 MAQ:op expresion_arit:t2  {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion(">");  RESULT="boolean"; :}
+    | expresion_arit:t1 MEQ:op expresion_arit:t2  {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion("<");  RESULT="boolean"; :}
+    | expresion_arit:t1 MAIQ:op expresion_arit:t2 {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion(">="); RESULT="boolean"; :}
+    | expresion_arit:t1 MEIQ:op expresion_arit:t2 {: parser.validarRelacional(t1,t2,opleft,opright); parser.generarOperacion("<="); RESULT="boolean"; :}
+    | expresion_arit:t {: RESULT = t; :};
 
-factor ::= INTEGER_LITERAL:v {: RESULT = new NodoCST(v.toString()); :}
-         | FLOAT_LITERAL:v   {: RESULT = new NodoCST(v.toString()); :}
-         | BOOL_LITERAL:v    {: RESULT = new NodoCST(v.toString()); :}
-         | CHAR_LITERAL:v    {: RESULT = new NodoCST(v.toString()); :}
-         | STRING_LITERAL:v  {: RESULT = new NodoCST(v.toString()); :}
-         | IDENTIFIER:id     {: RESULT = new NodoCST(id); :}
-         | IDENTIFIER:id BRACKETI expresion:e1 BRACKETD BRACKETI expresion:e2 BRACKETD {: NodoCST n = new NodoCST("ACCESO_ARRAY"); n.addHijo(id); n.addHijo("["); n.addHijo(e1); n.addHijo("]"); n.addHijo("["); n.addHijo(e2); n.addHijo("]"); RESULT = n; :}
-         | IDENTIFIER:id PARENI arg_lista_opt:a PAREND {: NodoCST n = new NodoCST("LLAMADA"); n.addHijo(id); n.addHijo("("); n.addHijo(a); n.addHijo(")"); RESULT = n; :}
-         | MINUS factor:f {: NodoCST n = new NodoCST("NEGACION"); n.addHijo("-"); n.addHijo(f); RESULT = n; :} %prec UMINUS
-         | INC IDENTIFIER:id {: NodoCST n = new NodoCST("INC"); n.addHijo("++"); n.addHijo(id); RESULT = n; :}
-         | DEC IDENTIFIER:id {: NodoCST n = new NodoCST("DEC"); n.addHijo("--"); n.addHijo(id); RESULT = n; :}
-         | PARENI expresion:e PAREND {: NodoCST n = new NodoCST("AGRUPACION"); n.addHijo("("); n.addHijo(e); n.addHijo(")"); RESULT = n; :};
+
+expresion_arit ::= 
+      expresion_arit:t1 PLUS:op termino:t2  {: parser.validarAritmetica(t1,t2,opleft,opright); parser.generarOperacion("+"); RESULT=t1; :}
+    | expresion_arit:t1 MINUS:op termino:t2 {: parser.validarAritmetica(t1,t2,opleft,opright); parser.generarOperacion("-"); RESULT=t1; :}
+    | termino:t {: RESULT = t; :};
+
+
+termino ::= 
+      termino:t1 TIMES:op factor:t2  {: parser.validarAritmetica(t1,t2,opleft,opright); parser.generarOperacion("*"); RESULT=t1; :}
+    | termino:t1 DIV:op factor:t2    {: parser.validarAritmetica(t1,t2,opleft,opright); parser.generarOperacion("/"); RESULT=t1; :}
+    | termino:t1 DIVINT:op factor:t2 {: parser.validarEnteros(t1,t2,"//",opleft,opright); parser.generarOperacion("/"); RESULT="int"; :}
+    | termino:t1 MOD:op factor:t2    {: parser.validarEnteros(t1,t2,"%",opleft,opright);  parser.generarOperacion("%"); RESULT="int"; :}
+    | factor:t {: RESULT = t; :};
+
+factor ::= 
+      INTEGER_LITERAL:v {: parser.gen.print("li $t0, " + v); parser.gen.push(); RESULT = "int"; :}
+    | FLOAT_LITERAL:v   {: parser.gen.print("li $t0, " + v.intValue()); parser.gen.push(); RESULT = "float"; :}
+    | BOOL_LITERAL:v    {: int val = v.toString().equals("true")?1:0; parser.gen.print("li $t0, " + val); parser.gen.push(); RESULT = "boolean"; :}
+    | CHAR_LITERAL      {: parser.gen.print("li $t0, 0"); parser.gen.push(); RESULT = "char"; :}
+    | STRING_LITERAL:v    
+      {: 
+         String label = parser.registrarString((String)v);
+         
+         parser.gen.print("la $t0, " + label); 
+         parser.gen.push(); 
+         
+         RESULT = "string"; 
+      :}
+    | IDENTIFIER:id     
+      {: 
+         Simbolo s = parser.getSimbolo(id);
+         if(s != null) {
+             if(s.ambito.equals("Global")) parser.gen.print("lw $t0, " + id);
+             else parser.gen.print("lw $t0, " + s.offset + "($fp)");
+             parser.gen.push();
+             RESULT = s.getTipo();
+         } else {
+             parser.getTipoVar(id, idleft, idright); 
+             RESULT = "error";
+         }
+      :}
+    | IDENTIFIER:id PARENI arg_lista_opt:args PAREND 
+      {: 
+         RESULT = parser.validarLlamada(id, args, idleft, idright);
+         parser.gen.print("jal Func_" + id); // Salto a la funcion
+         parser.gen.print("move $t0, $v0");  // Recuperar resultado de $v0
+         parser.gen.push();                  // Meter a la pila
+      :}
+    | IDENTIFIER:id BRACKETI expresion:e1 BRACKETD BRACKETI expresion:e2 BRACKETD {: RESULT = parser.validarAccesoArreglo(id, e1, e2, idleft, idright); :}
+    | MINUS:op factor:t {: parser.gen.pop(); parser.gen.print("neg $t0, $t0"); parser.gen.push(); RESULT = t; :} %prec UMINUS
+    | PARENI expresion:t PAREND {: RESULT = t; :};
